@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 戰利品全紀錄｜金色通知＋每場總表
 // @namespace    ro-local-loot-journal
-// @version      0.6.1
-// @description  HANS 選關＋戰利品整合：重進與選關控制收進右下戰利品面板；結算封存後自動返回；難度與戰利品統計。
+// @version      0.6.2
+// @description  HANS 選關＋戰利品：自動向下掃描全部遠征關卡，右下角切換目標；結算封存再重進、難度與戰利品統計。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.6.1';
+  const VERSION = '0.6.2';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -557,9 +557,9 @@
     ui.style.cssText='position:fixed;right:7px;bottom:8px;z-index:2147483647;max-width:calc(100vw - 14px);'+
       'font:12px/1.45 system-ui,sans-serif;color:#fff;background:#203452f0;border:1px solid #98b5db;'+
       'border-radius:8px;padding:6px;box-shadow:0 3px 12px #0007';
-    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.6.1 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
+    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.6.2 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
       <div id="roj4-menu" hidden style="width:265px;max-width:80vw;max-height:60vh;overflow-y:auto;padding-top:6px">
-        <div style="font-size:10px;opacity:.78">HANS 整合 v0.6.1 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
+        <div style="font-size:10px;opacity:.78">HANS 整合 v0.6.2 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
         <div id="roj4-discord">Discord：開｜待送 0</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
           <button id="roj4-toggle">暫停紀錄</button><button id="roj4-notify">關閉 DC</button>
@@ -643,11 +643,114 @@
     otherStage: /^(?:普隆德拉(?:原野|地下水道|城)|失事輪|失事轮|柏伊亞[嵐島嶼屿島]+|prontera(?:fields?|sewers?|castle)|shipwreck|byalan\w*|payoncave)$/i
   };
   const norm = s => String(s ?? '').normalize('NFKC').replace(/[\s\u00a0\u200b-\u200d]/g,'').trim();
-  // 新增第二個關卡：保留斐揚森林，預設改成斐揚洞穴。
-  const STAGES = {
-    forest: {name:'斐揚森林',re:W.forest},
-    cave:   {name:'斐揚洞穴',re:W.cave}
+  // 遠征清單以目前遊戲畫面為準；不硬編碼未見過的關卡名稱。
+  const STAGES={
+    forest:{name:'斐揚森林',re:W.forest,unlocked:true},
+    cave:{name:'斐揚洞穴',re:W.cave,unlocked:true}
   };
+  const CATALOG_KEY='hh-ro-stage-catalog-v062', SELECT_KEY='hh-ro-dungeon-v16';
+  const savedCatalog=(()=>{
+    try{const v=JSON.parse(localStorage.getItem(CATALOG_KEY)||'[]');return Array.isArray(v)?v:[]}
+    catch{return []}
+  })();
+  const namePattern=name=>new RegExp('^'+[...norm(name)].map(ch=>
+    /[\p{L}\p{N}]/u.test(ch)?ch:'\\'+ch).join('')+'$','i');
+  function rememberStage(name,unlocked,level=''){
+    name=String(name||'').trim().replace(/[\r\n]+/g,' ');
+    if(name.length<2||name.length>45)return null;
+    const found=Object.entries(STAGES).find(([,v])=>norm(v.name)===norm(name));
+    const key=found?.[0]||'hans:'+norm(name);
+    if(!STAGES[key])STAGES[key]={name,re:namePattern(name),unlocked,level};
+    else{
+      STAGES[key].unlocked=unlocked;
+      if(level)STAGES[key].level=level;
+    }
+    const current=[...picker.options].find(o=>o.value===key);
+    const opt=current||document.createElement('option');
+    opt.value=key;opt.textContent=name+(level?' · Lv '+level:'')+(unlocked?'':'（未解鎖）');
+    opt.disabled=!unlocked;
+    if(!current)picker.appendChild(opt);
+    return key;
+  }
+  const levelPattern=/\bLv\.?\s*(\d+)\s*[-–—~～]\s*(\d+)\b/i;
+  // 對照實際畫面：左側每張關卡卡片有 Lv 31-40 等範圍及關卡名稱。
+  function stageRows(){
+    const out=[],used=new Set(),walk=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
+    let node,count=0;
+    while((node=walk.nextNode())&&count++<14000){
+      const leafText=String(node.nodeValue||'').normalize('NFKC').trim();
+      if(leafText.length>60||!levelPattern.test(leafText))continue;
+      const el=node.parentElement;
+      if(!el||hud.contains(el)||el.closest('#'+UI_ID+',script,style,noscript')||!shown(el,true))continue;
+      for(let p=el,depth=0;p&&p!==document.body&&depth<10;p=p.parentElement,depth++){
+        const rect=rct(p),cx=rect.left+rect.width/2,text=String(p.textContent||'');
+        if(cx>innerWidth*.48||rect.width>innerWidth*.55)break;
+        if(rect.width<115||rect.height<48||rect.height>175||text.length>350||!levelPattern.test(text))continue;
+        const leaves=[...p.querySelectorAll('*')].filter(x=>x.childElementCount===0)
+          .map(x=>norm(x.textContent)).filter(Boolean);
+        const title=leaves.find(x=>x.length>=2&&x.length<=40&&/[\p{L}]/u.test(x)
+          && !/^(?:Lv\.?\s*\d+[-–—~～]\d+|MVP.*|已通關|未解鎖|可挑戰|已選擇|劇情|出發|頭目.*)$/i.test(x)
+          && !/^\d+(?:[:：]\d+)?$/.test(x));
+        if(!title)continue;
+        const key=norm(title);
+        if(!used.has(key)){
+          const level=(leafText.match(levelPattern)||[]).slice(1,3).join('-');
+          out.push({el:p,name:title,level,unlocked:!/未解鎖|尚未解鎖|未開放/i.test(text)});
+          used.add(key);
+        }
+        break;
+      }
+    }
+    return out;
+  }
+  const catalog={running:false,complete:false,scroll:null,steps:0,observed:new Set(),
+    searchName:'',searchSteps:0};
+  function findListScroll(rows){
+    for(let p=rows[0]?.el,i=0;p&&i<14;p=p.parentElement,i++){
+      const r=rct(p);
+      if(p.clientHeight>=110&&p.scrollHeight>p.clientHeight+25&&
+         p.clientWidth>=110&&p.clientWidth<innerWidth*.55&&r.left<innerWidth*.48)return p;
+    }
+    return null;
+  }
+  function readStageCatalog(){
+    const rows=stageRows();let change=false;
+    for(const row of rows){
+      const k=rememberStage(row.name,row.unlocked,row.level);
+      if(k&&!catalog.observed.has(k)){catalog.observed.add(k);change=true}
+    }
+    if(change)try{
+      localStorage.setItem(CATALOG_KEY,JSON.stringify(
+        Object.values(STAGES).map(v=>({name:v.name,unlocked:v.unlocked,level:v.level||''}))));
+    }catch{}
+    if(!catalog.scroll)catalog.scroll=findListScroll(rows);
+    return rows;
+  }
+  function scanAllStages(){
+    if(!catalog.complete&&!catalog.running){
+      catalog.running=true;catalog.steps=0;catalog.observed=new Set();
+    }
+    if(!catalog.running)return;
+    const rows=readStageCatalog(),el=catalog.scroll;
+    if(!el||catalog.steps>=70||el.scrollTop>=el.scrollHeight-el.clientHeight-3){
+      catalog.running=false;catalog.complete=true;
+      if(el)el.scrollTop=0;
+      tell('關卡清單已掃描 '+catalog.observed.size+' 個，選取後可自動重進');
+      return;
+    }
+    const before=el.scrollTop;
+    el.scrollTop=Math.min(el.scrollHeight-el.clientHeight,before+Math.max(110,el.clientHeight*.72));
+    catalog.steps++;
+    if(el.scrollTop<=before+1)catalog.steps=70;
+  }
+  function stageExplorerTick(){
+    if(!expeditionOpen()){
+      catalog.running=false;catalog.complete=false;catalog.scroll=null;
+      catalog.searchSteps=0;catalog.searchName='';return;
+    }
+    scanAllStages();
+  }
+
   const rct = el => el.getBoundingClientRect();
   function shown(el,allowOffscreen=false) {
     if (!el || !el.isConnected || el.disabled || !el.getClientRects().length) return false;
@@ -676,11 +779,17 @@
   picker.setAttribute('aria-label','自動進入的副本');
   picker.style.cssText='margin-left:6px;color:#18283b;background:#fff;border-radius:4px;padding:4px;font:12px sans-serif;max-width:120px';
   for(const [value,stage] of Object.entries(STAGES)){
-    const option=document.createElement('option');
-    option.value=value;option.textContent=stage.name;picker.append(option);
+    const option=document.createElement('option');option.value=value;
+    option.textContent=stage.name;picker.append(option);
   }
-  try{picker.value=localStorage.getItem('hh-ro-dungeon-v16')||'cave';}catch{picker.value='cave';}
-  if(!STAGES[picker.value])picker.value='cave';
+  for(const item of savedCatalog){
+    if(item&&typeof item.name==='string')rememberStage(item.name,item.unlocked!==false,item.level||'');
+  }
+  let savedTarget='cave';
+  try{savedTarget=localStorage.getItem(SELECT_KEY)||'cave';}catch{}
+  if(!STAGES[savedTarget]&&savedTarget.startsWith('hans:'))rememberStage(savedTarget.slice(5),true);
+  picker.value=STAGES[savedTarget]?savedTarget:'cave';
+
   hud.append(btn,picker,msg);
   // 選關與戰利品共用右下原本面板。若主面板尚未生成，重試掛載，不開第二個浮窗。
   function mountStageIntoLootPanel(){
@@ -807,8 +916,8 @@
   }
   btn.addEventListener('click',()=>enable(!active));
   picker.addEventListener('change',()=>{
-    if(!STAGES[picker.value])return;
-    try{localStorage.setItem('hh-ro-dungeon-v16',picker.value);}catch{}
+    if(!STAGES[picker.value]||STAGES[picker.value].unlocked===false)return;
+    try{localStorage.setItem(SELECT_KEY,picker.value);}catch{}
     phase('');tell(`目標已切換：${targetStage().name}（${active?'自動重進中':'尚未開啟'}）`);
   });
   window.addEventListener('keydown',e=>{
@@ -867,33 +976,39 @@
     return hits(W.story).length > 0 || [...document.querySelectorAll('button,[role="button"]')]
       .some(el => el.getClientRects().length > 0 && W.story.test(norm(el.textContent)));
   }
-  function expeditionOpen() {
-    // CRITICAL: detect the stage LIST, not the "出發" button. On 普隆德拉城
-    // the button is labelled "劇情", so there may be no 出發 at all.
-    const payonLeft=[...hits(W.forest),...hits(W.cave)].filter(left);
-    const otherLeft=hits(W.otherStage).filter(left);
-    const title=hits(W.expedition).some(h=>h.r.top<innerHeight*.25 && left(h));
-    const score=hits(W.score).length>0 || [...document.querySelectorAll('body *')]
-      .some(el=>el.children.length===0 && shown(el) && /裝備分數/.test(el.textContent||'') && (el.textContent||'').length<70);
-    return payonLeft.length>0 && (otherLeft.length>0 || title || score);
+  function expeditionOpen(){
+    // 往下捲後斐揚可能不在畫面，依左側關卡卡片判定，不再只找兩張斐揚卡。
+    if(findControl(W.wilderness))return false;
+    const rows=stageRows();
+    if(rows.length<2)return false;
+    const depart=findControl(W.depart);
+    const title=hits(W.expedition).some(h=>h.r.top<innerHeight*.3&&left(h));
+    return !!(depart||title||storyTextIsVisible()||rows.length>=3);
   }
-  function stageTarget() {
-    // 選單可能要捲動，允許先找到位於捲動容器可視範圍外的洞穴項目。
-    const hit=hits(targetStage().re,true).filter(left).sort((a,b)=>a.r.top-b.r.top)[0];
-    if(!hit)return null;
-    // Choose a whole stage row by visible size, regardless of CSS class names.
-    let best=hit.el, score=-1;
-    for(let p=hit.el,i=0;p&&p!==document.body&&i<9;p=p.parentElement,i++){
-      if(!shown(p,true))continue;
-      const r=rct(p), cx=r.left+r.width/2;
-      if(cx>=innerWidth*.47 || r.width>innerWidth*.48 || r.height>160)break;
-      let value=0;
-      if(r.width>=140&&r.width<=innerWidth*.46&&r.height>=42&&r.height<=140)value=5+r.width/100;
-      if(p.matches('button,[role="button"],a,[data-stage],[data-expedition],li'))value+=7;
-      if(value>score){score=value;best=p;}
+  function stageTarget(){
+    const target=norm(targetStage().name);
+    return stageRows().find(x=>norm(x.name)===target)||null;
+  }
+  function seekStage(){
+    const target=targetStage().name;
+    if(catalog.searchName!==target){
+      catalog.searchName=target;catalog.searchSteps=0;
+      if(catalog.scroll)catalog.scroll.scrollTop=0;
     }
-    return best;
+    const rows=readStageCatalog();
+    const row=rows.find(x=>norm(x.name)===norm(target));
+    if(row)return row;
+    const el=catalog.scroll;
+    if(!el||catalog.searchSteps>65||el.scrollTop>=el.scrollHeight-el.clientHeight-3){
+      tell('找不到遠征關卡：'+target+'，為避免誤點已停止選擇');return null;
+    }
+    el.scrollTop=Math.min(el.scrollHeight-el.clientHeight,
+      el.scrollTop+Math.max(110,el.clientHeight*.72));
+    catalog.searchSteps++;
+    tell('正在向下尋找 '+target+' ('+catalog.searchSteps+')');
+    return null;
   }
+
   function selectedStage(row){
     for(let p=row,i=0;p&&i<4;p=p.parentElement,i++) {
       const cls=typeof p.className==='string'?p.className:'';
@@ -904,9 +1019,12 @@
   }
   function handleExpedition(){
     phase('expedition');
+    if(!catalog.complete){tell('正在向下讀取完整關卡列表：'+catalog.observed.size+' 個');return;}
     const stage=targetStage();
-    const row=stageTarget();
-    if(!row){tell(`遠征已開，但找不到「${stage.name}」項目`);return;}
+    if(stage.unlocked===false){tell('尚未解鎖：'+stage.name);return;}
+    const row=stageTarget()||seekStage();
+    if(!row)return;
+    if(!row.unlocked){tell('關卡未解鎖，停止選擇：'+stage.name);return;}
     const previewMatch=hits(stage.re).some(rightPreview);
     const otherPreview=Object.entries(STAGES).some(([id,s])=>id!==picker.value && hits(s.re).some(rightPreview));
     // 如果右邊明顯顯示另一個副本，即使左邊的卡片有「已選」樣式也不信任。
@@ -927,8 +1045,8 @@
     if((attempts.stage||0)>=3){tell(`選了${stage.name}仍無法確認切換；停止重試，避免按錯副本`);return;}
     beforeStageWasStory=beforeStageWasStory||storyTextIsVisible();
     // 左邊清單若尚未捲到洞穴，先讓項目進入可視範圍。
-    try{row.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});}catch{}
-    if(action('stage',row,stage.name,3,1350,true))stageClickedAt=Date.now();
+    try{row.el.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});}catch{}
+    if(action('stage',row.el,stage.name,3,1350,true))stageClickedAt=Date.now();
   }
   // The difficulty dialog is a *new* stage after 出發. Its confirm button is
   // 「前往野外」. Detect it BEFORE the expedition list (which may remain in DOM
@@ -961,7 +1079,7 @@
     if(!active||document.hidden)return;
     try {
       if(difficultyOpen()){handleDifficulty();return;}
-      if(expeditionOpen()){handleExpedition();return;}
+      if(expeditionOpen()){stageExplorerTick();handleExpedition();return;}
       const back=findControl(W.back);
       if(back){phase('result');
         if(!stageLootBridge.readyToLeave()){tell('結算辨識與封存中，暫不返回角色');return;}
@@ -971,6 +1089,14 @@
       phase('waiting');tell(`等待結算／主城／遠征／難度視窗（目標：${targetStage().name}）`);
     } catch(e) {tell('偵測錯誤：請截圖並回報');console.error('[HANS 整合選關]',e);}
   }
+  // 沒有開啟自動重進時，進遠征列表也會掃描；讓玩家先挑選新關卡。
+  setInterval(()=>{
+    if(document.hidden)return;
+    try{
+      if(expeditionOpen())stageExplorerTick();
+      else if(catalog.complete||catalog.running)stageExplorerTick();
+    }catch(e){console.warn('[HANS 關卡清單]',e)}
+  },850);
   window.addEventListener('pagehide',()=>clearInterval(timer));
   enable(false);
 })();

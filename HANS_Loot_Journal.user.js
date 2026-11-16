@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 戰利品全紀錄｜金色通知＋每場總表
 // @namespace    ro-local-loot-journal
-// @version      0.7.6
-// @description  修復每次重進忘記下滾縮放：入場按鍵排程＋實際新局偵測雙保險，每局往下滾10次；保留選關、短場與精簡掉落。
+// @version      0.7.7
+// @description  修正「你死了」也會等死亡結算與卡片記錄完成再自動按返回角色；保留每局重進下滾10次、3分鐘刷卡、精簡掉落。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.7.6';
+  const VERSION = '0.7.7';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -341,7 +341,7 @@
       bosses:number(/頭目\s*(\d+)/),baseExp:number(/Base\s*EXP\s*:\s*\+?([\d,]+)/i),
       jobExp:number(/Job\s*EXP\s*:\s*\+?([\d,]+)/i),
       survived:/你活下來了|你存活下來了|You survived/i.test(text)?true:
-        /你倒下了|You died|Game Over/i.test(text)?false:null
+        /你死了|你倒下了|You died|Game Over/i.test(text)?false:null
     };
   }
   function summarySnapshot(){
@@ -403,7 +403,7 @@
   function scanSummaryCards(){
     if(!settings.running)return;
     const allText=String(document.body?.innerText||'');
-    const resultVisible=/你活下來了|你存活下來了|你倒下了|You survived|You died|Run Results|獲得的掉落|獲得的戰利品/i.test(allText) && /獲得的卡片|Cards obtained|Obtained cards/i.test(allText);
+    const resultVisible=/你活下來了|你存活下來了|你死了|你倒下了|You survived|You died|Run Results|獲得的掉落|獲得的戰利品/i.test(allText) && /獲得的卡片|Cards obtained|Obtained cards/i.test(allText);
     if(!resultVisible){summaryWasVisible=false;summarySeen.clear();summaryDropSeen.clear();return;}
     if(!summaryWasVisible){summaryWasVisible=true;summarySeen.clear();}
     const labels=[...document.querySelectorAll('h1,h2,h3,h4,div,span,p')]
@@ -439,7 +439,7 @@
   // 以「你存活下來了」+「返回角色」辨識結算（含常見英文字樣），不會因主城出現背包而誤判。
   function resultVisible(){
     const t=String(document.body?.innerText||'');
-    return /你活下來了|你存活下來了|你倒下了|You survived|You died|Run Results|Game Over|戰鬥結算|本局傷害/i.test(t)
+    return /你活下來了|你存活下來了|你死了|你倒下了|You survived|You died|Run Results|Game Over|戰鬥結算|本局傷害/i.test(t)
       && /返回[角腳]色|回到角色|Back to character|Return to character/i.test(t);
   }
   function recordLine(rec,index){
@@ -505,14 +505,18 @@
     if(snap.fingerprint!==resultFingerprint){resultFingerprint=snap.fingerprint;resultStableSince=now;}
     if(currentRun)currentRun.summaryObserved={...snap,fingerprint:undefined};
     const both=snap.hasDropSection&&snap.hasCardSection;
-    if(now-resultSeenAt>=RESULT_MIN_MS&&both&&now-resultStableSince>=RESULT_STABLE_MS){
-      if(currentRun&&(!snap.dropIcons||!snap.cardIcons))
-        currentRun.captureWarning='某類縮圖未讀取到：可能沒有掉落，或圖示不是 img，數量請核對';
-      finishRun('結算縮圖與戰績已穩定');
+    // 死亡結算常只有「獲得的卡片」而沒有「獲得的掉落」；
+    // 只要卡片區和戰績已穩定，不能硬等不存在的掉落區，否則不會自動重進。
+    const died=snap.stats?.survived===false;
+    const enough=both||(died&&snap.hasCardSection);
+    if(now-resultSeenAt>=RESULT_MIN_MS&&enough&&now-resultStableSince>=RESULT_STABLE_MS){
+      if(currentRun&&(!snap.hasDropSection||(!snap.dropIcons&&snap.hasDropSection)))
+        currentRun.captureWarning=died?'死亡結算未顯示掉落區，已依卡片與戰績封存':'掉落縮圖未讀取到，請核對';
+      finishRun(died?'死亡結算卡片與戰績穩定':'結算縮圖與戰績已穩定');
     }else if(now-resultSeenAt>=RESULT_MAX_MS){
-      if(currentRun)currentRun.captureWarning=both?'結算內容持續變動，逾時保底封存':'結算區塊未完整辨識，逾時保底封存';
-      finishRun('結算等待逾時');
-    }else status('等待結算資料穩定，暫不返回角色');
+      if(currentRun)currentRun.captureWarning=enough?'結算內容持續變動，逾時保底封存':'結算區塊未完整辨識，逾時保底封存';
+      finishRun(died?'死亡結算等待逾時':'結算等待逾時');
+    }else status(died?'等待死亡結算／卡片穩定，暫不返回角色':'等待結算資料穩定，暫不返回角色');
   }
 
   // 主動離場沒有正常戰利品結算；不得把未顯示的卡片誤認為已取得。
@@ -661,9 +665,9 @@
     ui.style.cssText='position:fixed;right:7px;bottom:8px;z-index:2147483647;max-width:calc(100vw - 14px);'+
       'font:12px/1.45 system-ui,sans-serif;color:#fff;background:#203452f0;border:1px solid #98b5db;'+
       'border-radius:8px;padding:6px;box-shadow:0 3px 12px #0007';
-    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.7.6 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
+    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.7.7 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
       <div id="roj4-menu" hidden style="width:265px;max-width:80vw;max-height:60vh;overflow-y:auto;padding-top:6px">
-        <div style="font-size:10px;opacity:.78">HANS 整合 v0.7.6 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
+        <div style="font-size:10px;opacity:.78">HANS 整合 v0.7.7 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
         <div id="roj4-discord">Discord：開｜待送 0</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
           <button id="roj4-toggle">暫停紀錄</button><button id="roj4-notify">關閉 DC</button>

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 斐揚森林｜磁鐵限量・稀有優先・Boss 戰後採集
 // @namespace    ro-local-profiles
-// @version      1.9.1
-// @description  首次3:00採集；此後每60秒短採35秒返點；磁鐵成功後冷卻60秒；橘>紫>寶箱；Boss戰後磁鐵5秒＋裝備防卡
+// @version      1.9.2
+// @description  首次1:00採集以快速取得升級資源；此後每60秒短採35秒返點；磁鐵成功後冷卻60秒；橘>紫>寶箱；Boss戰後5秒
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        none
@@ -39,8 +39,8 @@
   });
 
   const CAMP = Object.freeze({
-    firstGatherMs: 180000,   // 開局 3:00（延後，讓巫師先建立輸出）
-    everyMs: 60000,          // 此後 4:00、5:00、6:00...
+    firstGatherMs: 60000,    // 開局 1:00（早期採集拾取經驗升級資源）
+    everyMs: 60000,          // 此後 2:00、3:00、4:00...
     fundsConfirmMs: 400,     // 金幣不足需持續確認，避免誤讀閃爍UI
     initialMagnetSeekMs: 25000, // 先找磁鐵25秒，沒有就撿稀有裝與寶箱
     gatherMaxMs: 35000,      // 每輪硬上限35秒，回程另計
@@ -229,7 +229,7 @@
     camp.magnetSeekUntil=now+CAMP.initialMagnetSeekMs;
     camp.magnetSecuredThisCycle=false;
     camp.magnetPriorityComplete=false;
-    label('森林 v1.9.1｜第'+(cycle+1)+'輪：35秒採集');
+    label('森林 v1.9.2｜第'+(cycle+1)+'輪：35秒採集');
   }
   function beginReturn(now) {
     camp.mode='return'; camp.startedReturn=now;
@@ -240,7 +240,7 @@
   }
   function returnHome(now) {
     const p=homePosition();
-    if (!p || !camp.home) {move();label('森林 v1.9.1｜等待返點座標');return;}
+    if (!p || !camp.home) {move();label('森林 v1.9.2｜等待返點座標');return;}
     const gap=distance(p,camp.home);
     if (gap<=CAMP.homeTolerance) {
       move(); camp.mode='parked'; resetTarget();
@@ -248,11 +248,11 @@
       if(clock.elapsedMs>=CAMP.firstGatherMs)
         camp.lastCycle=Math.max(camp.lastCycle,
           Math.floor((clock.elapsedMs-CAMP.firstGatherMs)/CAMP.everyMs));
-      label('森林 v1.9.1｜已回原地，待命');return;
+      label('森林 v1.9.2｜已回原地，待命');return;
     }
     if (now-camp.startedReturn>CAMP.returnMaxMs || camp.homeDetours>CAMP.returnMaxDetours) {
       move();camp.mode='failed';
-      label('森林 v1.9.1｜返點失敗，已停止移動');return;
+      label('森林 v1.9.2｜返點失敗，已停止移動');return;
     }
     if (now<camp.homeDetourUntil) {move(camp.homeDetourKey);return;}
     if (camp.homeDetourUntil) {
@@ -268,13 +268,13 @@
       camp.homeDetourKey=sides[camp.homeDetours%2];
       camp.homeDetours++;camp.homeDetourUntil=now+CAMP.returnDetourMs;
       camp.homeProgressAt=now;move(camp.homeDetourKey);
-      label('森林 v1.9.1｜返點繞路 '+camp.homeDetours+'/'+CAMP.returnMaxDetours);return;
+      label('森林 v1.9.2｜返點繞路 '+camp.homeDetours+'/'+CAMP.returnMaxDetours);return;
     }
     const dx=camp.home[0]-p[0],dy=camp.home[1]-p[1];
     const margin=.35*Math.max(Math.abs(dx),Math.abs(dy));
     move((Math.abs(dx)>margin?(dx>0?'d':'a'):'')+
          (Math.abs(dy)>margin?(dy>0?'s':'w'):''));
-    label('森林 v1.9.1｜返回原地 距離'+gap.toFixed(1));
+    label('森林 v1.9.2｜返回原地 距離'+gap.toFixed(1));
   }
   function hasValuableTargets(){
     const rare=[...orangeLoot,...purpleLoot].some(pos=>
@@ -288,20 +288,20 @@
     if(clock.phase==='boss'&&clock.bossConfirmed){
       // Boss 存活期間打王，停止採集和移動；戰後才採集。
       move();resetTarget();magnetWatch=null;
-      label('森林 v1.9.1｜Boss戰鬥中｜停止採集');return true;
+      label('森林 v1.9.2｜Boss戰鬥中｜停止採集');return true;
     }
     const p=homePosition();
-    if (!p) {move();label('森林 v1.9.1｜等待小地圖位置');return true;}
+    if (!p) {move();label('森林 v1.9.2｜等待小地圖位置');return true;}
     if (!camp.home) {
       camp.home=p;camp.mode='parked';
       const dueCycle=Math.floor((clock.elapsedMs-CAMP.firstGatherMs)/CAMP.everyMs);
       const dueAt=CAMP.firstGatherMs+dueCycle*CAMP.everyMs;
       camp.lastCycle=clock.elapsedMs<CAMP.firstGatherMs ? -1 :
         (clock.elapsedMs-dueAt<=CAMP.missedWindowMs ? dueCycle-1 : dueCycle);
-      move();label('森林 v1.9.1｜已定位據點，等待採集');return true;
+      move();label('森林 v1.9.2｜已定位據點，等待採集');return true;
     }
     if(camp.mode==='failed'){
-      move();label('森林 v1.9.1｜返點失敗：已停止移動，請手動確認');return true;
+      move();label('森林 v1.9.2｜返點失敗：已停止移動，請手動確認');return true;
     }
     if(camp.mode==='return') {returnHome(now);return true;}
     if(camp.mode==='gather'){
@@ -334,7 +334,7 @@
     if(camp.mode==='parked'){
       const elapsed=clock.elapsedMs;
       if(elapsed>=CAMP.skipLastGatherMs){
-        move();label('森林 v1.9.1｜13:30後原地待王，保留磁鐵');return true;
+        move();label('森林 v1.9.2｜13:30後原地待王，保留磁鐵');return true;
       }
       const cycle=Math.floor((elapsed-CAMP.firstGatherMs)/CAMP.everyMs);
       if(cycle>camp.lastCycle && elapsed>=CAMP.firstGatherMs){
@@ -343,7 +343,7 @@
         camp.lastCycle=cycle; // 回程過長就跳過已過時的窗口
       }
       const remain=Math.max(0,CAMP.firstGatherMs+(camp.lastCycle+1)*CAMP.everyMs-elapsed);
-      move();label('森林 v1.9.1｜據點刷怪｜下輪 '+Math.ceil(remain/1000)+' 秒');
+      move();label('森林 v1.9.2｜據點刷怪｜下輪 '+Math.ceil(remain/1000)+' 秒');
       return true;
     }
     move();return true;
@@ -547,12 +547,12 @@
         clock.postRefreshUntil=now+300;
       }
       if(active?.kind==='magnet'){move();resetTarget();}
-      label('森林 v1.9.1｜磁鐵已近距離消失，暫判成功｜冷卻60秒');
+      label('森林 v1.9.2｜磁鐵已近距離消失，暫判成功｜冷卻60秒');
     }else{
       // 不確定不扣額度；短暫封鎖，避免反覆追同一個消失座標。
       blocked.push({kind:'magnet',position:[...magnetWatch.position],until:now+3500});
       if(active?.kind==='magnet'){move();resetTarget();}
-      label('森林 v1.9.1｜磁鐵消失但未確認拾取，不計數');
+      label('森林 v1.9.2｜磁鐵消失但未確認拾取，不計數');
     }
     magnetWatch=null;
   }
@@ -617,7 +617,7 @@
       patrolUntil=now+SET.patrolLegMs;
       lastPatrolSkipAt=now; lastMoveAt=now;
     }
-    label(blocked.length ? '森林 v1.9.1｜定時採集中・巡走（暫跳'+blocked.length+'件）' : '森林 v1.9.1｜定時採集中・附近巡走');
+    label(blocked.length ? '森林 v1.9.2｜定時採集中・巡走（暫跳'+blocked.length+'件）' : '森林 v1.9.2｜定時採集中・附近巡走');
     move(route[leg]);
   }
 
@@ -627,13 +627,13 @@
     if(map!==canvas)watch(map);
     if(handleRoundTransition(now,!!map?.getClientRects().length))return;
     if(document.getElementById('ro-forest-camp-v18')){
-      move();label('森林 v1.9.1｜偵測到舊版 v1.8！請先停用舊腳本');return;
+      move();label('森林 v1.9.2｜偵測到舊版 v1.8！請先停用舊腳本');return;
     }
     if(!map?.getClientRects().length || !player || now-frame>900 ||
        find('#picker:not(.hidden), #drop-reveal:not(.hidden)') ||
        document.activeElement?.matches('input,textarea,select,[contenteditable="true"]')){
       move();resetMovementWatch(now);
-      label('森林 v1.9.1｜等待地圖或選卡／掉寶視窗關閉');return;
+      label('森林 v1.9.2｜等待地圖或選卡／掉寶視窗關閉');return;
     }
     updateClock(now);
     // 磁鐵原本就在追逐，但到13:00必須立即取消、不扣冷卻。
@@ -645,7 +645,7 @@
     const finalLootMode=clock.phase==='postboss';
     if(finalLootMode){
       if(clock.postBossExpired||now>=clock.postBossEndAt){
-        move();label('森林 v1.9.1｜戰後拾取結束，等待結算');return;
+        move();label('森林 v1.9.2｜戰後拾取結束，等待結算');return;
       }
       if(camp.mode!=='final-loot'){
         camp.mode='final-loot';move();resetTarget();blocked=[];
@@ -656,18 +656,18 @@
         clock.postMagnetFinished=true;
         if(active?.kind==='magnet'){
           move();resetTarget();magnetWatch=null;
-          label('森林 v1.9.1｜戰後追磁鐵已滿5秒，改撿裝備');
+          label('森林 v1.9.2｜戰後追磁鐵已滿5秒，改撿裝備');
         }
       }
       if(clock.postRefreshUntil>now){move();return;}
     }else{
       if(clock.source==='遊戲計時無法確認'){
-        move();label('森林 v1.9.1｜等待遊戲時間同步');return;
+        move();label('森林 v1.9.2｜等待遊戲時間同步');return;
       }
       if(controlCamp(now))return;
     }
     if(magnetWatch?.missingAt && now-magnetWatch.missingAt<CAMP.magnetMissingConfirmMs){
-      move();label('森林 v1.9.1｜正在確認磁鐵拾取');return;
+      move();label('森林 v1.9.2｜正在確認磁鐵拾取');return;
     }
     let stuck=updateMovement(now);
     cleanBlocked(now);
@@ -691,9 +691,9 @@
       resetTarget();chestLockUntil=0;resetMovementWatch(now);
     }else if(same)active.position=[...candidate.position];
     if(!active){
-      if(finalLootMode){move();label('森林 v1.9.1｜戰後監看橘／紫裝與寶箱');return;}
+      if(finalLootMode){move();label('森林 v1.9.2｜戰後監看橘／紫裝與寶箱');return;}
       patrol(now,stuck);
-      if(magnetCanChase(now))label('森林 v1.9.1｜尋磁鐵中（最多25秒）');
+      if(magnetCanChase(now))label('森林 v1.9.2｜尋磁鐵中（最多25秒）');
       return;
     }
     camp.lastIdleAt=now;
@@ -710,14 +710,14 @@
     // 戰後橘裝：不是3秒硬上限，只有連續3秒未接近才封鎖。
     if(finalLootMode&&active.kind==='orange'){
       if(now-progressAt>=CAMP.bossOrangeStallMs){
-        blockTarget(now);label('森林 v1.9.1｜橘裝3秒無進展，改找其他橘裝／紫裝');return;
+        blockTarget(now);label('森林 v1.9.2｜橘裝3秒無進展，改找其他橘裝／紫裝');return;
       }
     }else if(stuck||now-progressAt>SET.targetStallMs){
       if(finalLootMode&&detours>=1)blockTarget(now);
       else beginDetour(now);
       return;
     }
-    label('森林 v1.9.1｜'+(finalLootMode?'戰後：':'採集：')+active.display+
+    label('森林 v1.9.2｜'+(finalLootMode?'戰後：':'採集：')+active.display+
       (active.kind==='magnet'&&finalLootMode?'｜磁鐵總限5秒':'')+
       '（繞路'+detours+'/'+SET.maxDetours+'）');
     move(gap>.05?targetKeys(active.position):'');
@@ -743,12 +743,12 @@
       if(!roundState.outside){
         roundState.outside=true;roundState.lastExit=reason;resetRound(now);
       }
-      move();label('森林 v1.9.1｜等待下一場：'+reason);return true;
+      move();label('森林 v1.9.2｜等待下一場：'+reason);return true;
     }
     if(roundState.outside){
       const secs=mapVisible?readGameHudClock():null;
       if(!mapVisible||secs===null||secs>90){
-        move();label('森林 v1.9.1｜等待新副本載入');return true;
+        move();label('森林 v1.9.2｜等待新副本載入');return true;
       }
       roundState.outside=false;resetRound(now);
       clock.prevRaw=secs;clock.elapsedMs=secs*1000;clock.source='遊戲正計時';
@@ -777,10 +777,10 @@
       const now=timeNow();
       lastMagnetPickedAt=-Infinity;magnetWatch=null;chestLockUntil=0;
       timer=setInterval(tick,SET.interval);
-      btn.style.background='#186442';label('森林 v1.9.1｜開｜每60秒採35秒｜磁鐵限1個');
+      btn.style.background='#186442';label('森林 v1.9.2｜開｜每60秒採35秒｜磁鐵限1個');
     }else{
       restore?.();canvas=null;
-      btn.style.background='#384455';label('森林 v1.9.1｜關');
+      btn.style.background='#384455';label('森林 v1.9.2｜關');
     }
   }
   btn.onclick=()=>enable(!timer);

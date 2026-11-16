@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 戰利品全紀錄｜金色通知＋每場總表
 // @namespace    ro-local-loot-journal
-// @version      0.7.1
-// @description  修復右下角選關、重進及3分鐘刷卡控制區未顯示的初始化錯誤；保留難度掃描、戰利品及捨棄重進。
+// @version      0.7.2
+// @description  修復高難度提醒：出征／前往野外後辨識彈窗並自動點「入場」，保留原難度及右下選關／戰利品／3分鐘刷卡。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.7.1';
+  const VERSION = '0.7.2';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -585,9 +585,9 @@
     ui.style.cssText='position:fixed;right:7px;bottom:8px;z-index:2147483647;max-width:calc(100vw - 14px);'+
       'font:12px/1.45 system-ui,sans-serif;color:#fff;background:#203452f0;border:1px solid #98b5db;'+
       'border-radius:8px;padding:6px;box-shadow:0 3px 12px #0007';
-    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.7.1 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
+    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.7.2 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
       <div id="roj4-menu" hidden style="width:265px;max-width:80vw;max-height:60vh;overflow-y:auto;padding-top:6px">
-        <div style="font-size:10px;opacity:.78">HANS 整合 v0.7.1 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
+        <div style="font-size:10px;opacity:.78">HANS 整合 v0.7.2 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
         <div id="roj4-discord">Discord：開｜待送 0</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
           <button id="roj4-toggle">暫停紀錄</button><button id="roj4-notify">關閉 DC</button>
@@ -1295,6 +1295,44 @@
     return !!findControl(W.wilderness) ||
       (hits(W.difficulty).length > 0 && hits(W.enemyCount).length > 0);
   }
+  // 高難度時 HANS 會在「出征／前往野外」後多彈出一道確認：
+  // 「◆ 高難度提醒」→「✓ 入場」。先辨識整個提醒對話框再點，
+  // 絕不只靠「入場」二字點擊其他頁面的按鈕，也不改動難度滑桿。
+  function highDifficultyPrompt(){
+    const controls=document.querySelectorAll('button,[role="button"],input[type="button"],input[type="submit"]');
+    for(const button of controls){
+      if(!shown(button)||hud.contains(button)||button.disabled)continue;
+      const values=[button.innerText,button.textContent,button.getAttribute('aria-label'),button.value]
+        .filter(Boolean).map(norm);
+      if(!values.some(value=>/^[✓✔☑✅√]?入場$/.test(value)))continue;
+      for(let root=button.parentElement,depth=0;root&&depth<9;root=root.parentElement,depth++){
+        if(root===document.body)break;
+        const text=norm(root.innerText||root.textContent||'');
+        if(text.length>1600)continue;
+        if(/高難度提醒/.test(text) && /此難度可能造成|預估同時在場|效能模式/.test(text)){
+          return {button,root};
+        }
+      }
+    }
+    return null;
+  }
+  function handleHighDifficulty(prompt){
+    phase('high-difficulty-confirmation');
+    if((attempts.highEnter||0)>=2){
+      tell('高難度提醒：已嘗試入場2次，停止重複點擊以免誤操作');
+      return;
+    }
+    if(Date.now()-lastAt<1500){
+      tell('高難度提醒：等待入場確認視窗反應');
+      return;
+    }
+    // 先保存入圖縮放待辦，再點可能造成頁面跳轉的「入場」。
+    queueZoom();
+    if(!action('highEnter',prompt.button,'高難度提醒 → 入場',2,1500)){
+      clearZoomPending();
+    }
+  }
+
   function handleDifficulty() {
     phase('difficulty');
     stageLootBridge.captureDifficulty(picker.value);
@@ -1318,6 +1356,9 @@
   function tick() {
     if(!active||document.hidden)return;
     try {
+      // 新版 HANS 的高難度確認可能蓋住仍存在 DOM 的難度視窗，必須先處理它。
+      const highPrompt=highDifficultyPrompt();
+      if(highPrompt){handleHighDifficulty(highPrompt);return;}
       // 三分鐘捨棄確認優先於一般遠征重進；未完成局不可由普通選關誤點過去。
       if(handleShortRun())return;
       if(incompleteDialog()){tell('未完成的一局請手動確認或啟用3分鐘刷卡模式');return;}

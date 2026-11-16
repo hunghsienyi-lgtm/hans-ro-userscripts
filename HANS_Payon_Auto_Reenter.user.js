@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜長時間巡走＋磁鐵｜返點失敗自動安全停靠＋Lv130免翻牌
 // @namespace    hunghung-ro-local-tools
-// @version      2.2.0
-// @description  HANS長場：返原點超時改在現位置安全停靠、繼續打怪與磁鐵排程，避免永久卡住；Lv130即點「之後不再翻牌」，當次仍選完。
+// @version      2.2.1
+// @description  長場巡走可在本局任意時間開啟：自動讀遊戲計時並從當下接續磁鐵排程，不必等下一局；返點安全停靠、Lv130停止後續翻牌。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        none
@@ -41,7 +41,7 @@
   const button=document.createElement('button');
   button.id=UI_ID;button.type='button';
   button.style.cssText='position:fixed;left:8px;bottom:120px;z-index:2147483647;background:#384455;color:#fff;border:1px solid #eee;border-radius:5px;padding:5px 8px;font:12px system-ui,sans-serif;cursor:pointer;max-width:min(360px,80vw);text-align:left';
-  button.title='Shift+6 長場巡走；1分返點，2、3、6分及之後每2分鐘找磁鐵。若返點路徑不通，改在目前位置定點打怪；Lv130停止後續翻牌。';
+  button.title='Shift+6 長場巡走；本場進行到任何時間都可立即接手，已過時窗不補跑；中途加入時以目前位置作定點。1分、2／3／6／8／10等磁鐵，Lv130停止後續翻牌。';
   button.setAttribute('aria-keyshortcuts','Shift+6');
   document.body?.appendChild(button);
   function status(s){button.textContent='HANS 巡走｜'+s;}
@@ -139,9 +139,28 @@
     });
   }
   function startRound(seconds){
-    resetRound();round.started=true;round.outside=false;round.seconds=seconds;
-    round.prevSeconds=seconds;round.rawSeconds=seconds;round.home=[...player];round.mode='patrol';
-    status('開場巡走，1:00 回原點');
+    // 在本局中途才啟用時，直接使用當前的遊戲計時開始，
+    // 不必為了「超過45秒」等下一場。沒有本場出生點座標時，將當前位置當臨時定點。
+    resetRound();
+    round.started=true;round.outside=false;
+    round.seconds=seconds;round.prevSeconds=seconds;round.rawSeconds=seconds;
+    round.home=[...player];
+    const alreadyInProgress=seconds>=OPT.firstMinute;
+    round.mode=alreadyInProgress?'park':'patrol';
+    if(alreadyInProgress){
+      round.usingFallbackHome=true; // 中途接手：這不是本局原本的出生點
+      for(const m of magnetSchedule){
+        if(m+OPT.missedWindowS<seconds)round.completed.add(m);
+      }
+      if(seconds>360+OPT.missedWindowS)round.sixComplete=true;
+      const next=magnetSchedule.find(m=>!round.completed.has(m));
+      status('中途接手 '+Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0')+
+        '｜當前位置定點，'+(next===undefined?'等待Boss磁鐵':
+          '下次磁鐵 '+Math.floor(next/60)+':'+String(next%60).padStart(2,'0')));
+    }else{
+      status('中途接手 '+Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0')+
+        '｜繼續巡走，到1:00返目前定點');
+    }
   }
   function keysToward(a,b){
     const dx=b[0]-a[0],dy=b[1]-a[1],threshold=.35*Math.max(Math.abs(dx),Math.abs(dy));
@@ -350,7 +369,7 @@
     if(round.started)maybeDisableCards();
     if(!next||!visible(next)||!player||now-lastPlayerAt>950){move();status('等待小地圖座標');return;}
     if(!round.started){
-      if(secs>45){move();status('已進行 '+Math.floor(secs/60)+':'+String(secs%60).padStart(2,'0')+'，下一場開局再執行');return;}
+      // 現在不要求前45秒啟動，5:57開啟也能從6:00磁鐵接續。
       startRound(secs);
     }
     // Boss 結束時 HUD 也可能跳回 0:15，不能把它誤認為下一場開局。
@@ -399,7 +418,7 @@
     enabled=true;if(remember)try{sessionStorage.setItem(ENABLE_KEY,'1');}catch{}
     button.style.background='#186442';status('開｜等待下一場開局');
     clearInterval(interval);interval=setInterval(()=>{
-      try{loop();}catch(err){move();status('錯誤：已停止移動');console.error('[HANS 巡走 2.2.0]',err);}
+      try{loop();}catch(err){move();status('錯誤：已停止移動');console.error('[HANS 巡走 2.2.1]',err);}
     },OPT.tickMs);
   }
   button.onclick=()=>enabled?stop():start();

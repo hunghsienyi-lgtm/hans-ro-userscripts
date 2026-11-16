@@ -6,12 +6,13 @@
 
 | 腳本 | 版本 | Tampermonkey 安裝來源 |
 | --- | --- | --- |
-| 二轉巫師：先補五核心，再優先 +目標／+衝擊（暴風雪與霜凍之術） | 1.20 | [HANS_Wizard_AutoSkill.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Wizard_AutoSkill.user.js) |
+| 二轉巫師：五核心＋目標／衝擊；三分鐘巡走達 Lv30 後停止選升級牌 | 1.21 | [HANS_Wizard_AutoSkill.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Wizard_AutoSkill.user.js) |
 | 斐揚森林：首次 1:00、之後每分鐘採集 | 1.9.2 | [HANS_Forest_Magnet_Loot.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Forest_Magnet_Loot.user.js) |
 | **開局巡走／2、3、6 分鐘與之後每 2 分鐘找磁鐵／Boss 繼續採集／Lv120 免翻牌**（覆蓋原文字重進腳本） | **2.1.0** | [HANS_Payon_Auto_Reenter.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Payon_Auto_Reenter.user.js) |
-| **選關＋戰利品整合版（右下角）**：自動掃描關卡、可選 3 分鐘刷卡中途退出、結算紀錄、難度與場次 CSV、Discord | **0.7.2** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
+| **三分鐘刷卡專用巡走**：開場巡走、0:30 與 3:00 磁鐵、Lv30 免翻牌；與右下角短場重進同步 | **1.0.0** | [HANS_ThreeMinute_Magnet_Patrol.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_ThreeMinute_Magnet_Patrol.user.js) |
+| **選關＋戰利品整合版（右下角）**：可選 3 分鐘捨棄重進，第二顆磁鐵處理完才放行（最晚 3:55） | **0.7.3** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
 
-**2026-11-16 起，選關與戰利品已整合為同一支腳本。** 請在 Tampermonkey 將戰利品更新到 v0.7.2；原『文字重進』已更新改為 v2.1.0 的獨立巡走／磁鐵腳本，不再負責重進，自動重進改由右下角戰利品面板內的「重進」開關與關卡選單控制（不再顯示右上角固定視窗）。其餘巫師選技及森林採集維持獨立。安裝前先停用重複用途舊版腳本。後續更新時保留檔名與網址，增加腳本 `@version`，上傳覆寫到 `main`，Tampermonkey 依設定定期檢查 `@updateURL` 並取得 `@downloadURL`。更新頻率依瀏覽器與 Tampermonkey 設定而異；如需即時更新，可在 Tampermonkey 手動檢查更新。
+**2026-11-16 起，選關與戰利品已整合為同一支腳本。** 請在 Tampermonkey 將戰利品更新到 v0.7.3；原『文字重進』已更新改為 v2.1.0 的獨立巡走／磁鐵腳本，不再負責重進，自動重進改由右下角戰利品面板內的「重進」開關與關卡選單控制（不再顯示右上角固定視窗）。其餘巫師選技及森林採集維持獨立。安裝前先停用重複用途舊版腳本。後續更新時保留檔名與網址，增加腳本 `@version`，上傳覆寫到 `main`，Tampermonkey 依設定定期檢查 `@updateURL` 並取得 `@downloadURL`。更新頻率依瀏覽器與 Tampermonkey 設定而異；如需即時更新，可在 Tampermonkey 手動檢查更新。
 
 ## 安全與已知問題
 
@@ -77,3 +78,13 @@
 ## v0.7.2：高難度提醒（出征後確認入場）
 
 HANS 在高怪量／高難度時可能顯示「◆ 高難度提醒」，內容提示卡頓及同場預估怪量，並提供「取消」與「✓ 入場」。整合腳本在自動重進已開啟時會優先辨識此對話框，確認標題與內容吻合才點「入場」，之後等待地圖載入；不會自行更改敵人數量、敵人 HP、傷害、速度、事件數量、關卡等級等滑桿。若沒有高難度提醒則沿用原本選關流程。已對提示文字與非提示情境做模擬辨識測試，HANS 真正網頁操作仍待實測。
+
+## 新增：三分鐘刷卡專用巡走 v1.0.0（2026-11-16）
+
+- 原本長場巡走 v2.1.0 **保留**，另新增 `HANS_ThreeMinute_Magnet_Patrol.user.js`；需從 GitHub Raw 網址**首次安裝一次**。之後由固定 `@updateURL` 自動取得新版。
+- 開場 0:00 起在出生點附近移動、吸經驗，約 **0:30** 啟動第一輪磁鐵搜尋；最多搜尋 35 秒，接近並確認圖示持續消失才暫判拾取，隨後返回出生點。
+- **Lv30 起**在 Level Up 畫面點「之後不再翻牌」；巫師選技 v1.21 同時避免搶選 Lv30 以上的升級牌，Lv30 以前的原有選技排序不變。
+- **3:00** 啟動第二輪磁鐵搜尋。右下角戰利品整合 v0.7.3 在正常退出門檻（預設 3:20）到達時，若第二輪仍在找，先暫緩捨棄，等拾取或搜尋上限約 35 秒；最晚 3:55 放行，避免永久卡關。
+- 新巡走啟用時會嘗試開啟右下角「3分鐘刷卡」，並嘗試停止其他移動腳本。仍建議手動停用或關閉長場巡走 v2.1.0、舊森林採集 v1.9.2，避免兩支同時操作方向鍵。
+- 左側「HANS 3分巡走」按鈕或 **Shift+7** 開關；右下角「重進」仍須開啟並選好對應關卡。一般完整通關／長場模式可以關閉本腳本並關閉「3分鐘刷卡」。
+- 此為程式模擬測試與 HANS 截圖推定的 DOM 邏輯，尚未實測真正遊戲內磁鐵拾取、Lv30 免翻牌及中途捨棄後卡片是否保留。避免直接長時間無人值守，應先核對第一輪背包與收益。

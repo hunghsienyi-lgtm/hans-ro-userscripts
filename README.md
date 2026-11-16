@@ -10,9 +10,9 @@
 | 斐揚森林：首次 1:00、之後每分鐘採集 | 1.9.2 | [HANS_Forest_Magnet_Loot.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Forest_Magnet_Loot.user.js) |
 | **開局巡走／2、3、6 分鐘與之後每 2 分鐘找磁鐵／Boss 繼續採集／Lv120 免翻牌**（覆蓋原文字重進腳本） | **2.1.0** | [HANS_Payon_Auto_Reenter.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Payon_Auto_Reenter.user.js) |
 | **三分鐘刷卡專用巡走**：開場巡走、0:30 與 3:00 磁鐵、Lv30 免翻牌；與右下角短場重進同步 | **1.0.0** | [HANS_ThreeMinute_Magnet_Patrol.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_ThreeMinute_Magnet_Patrol.user.js) |
-| **選關＋戰利品整合版（右下角）**：可選 3 分鐘捨棄重進，第二顆磁鐵處理完才放行（最晚 3:55） | **0.7.3** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
+| **選關＋戰利品整合版（右下角）**：小地圖下精簡掉落即時記錄、3 分鐘磁鐵協調、選關、Discord、場次 CSV | **0.7.4** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
 
-**2026-11-16 起，選關與戰利品已整合為同一支腳本。** 請在 Tampermonkey 將戰利品更新到 v0.7.3；原『文字重進』已更新改為 v2.1.0 的獨立巡走／磁鐵腳本，不再負責重進，自動重進改由右下角戰利品面板內的「重進」開關與關卡選單控制（不再顯示右上角固定視窗）。其餘巫師選技及森林採集維持獨立。安裝前先停用重複用途舊版腳本。後續更新時保留檔名與網址，增加腳本 `@version`，上傳覆寫到 `main`，Tampermonkey 依設定定期檢查 `@updateURL` 並取得 `@downloadURL`。更新頻率依瀏覽器與 Tampermonkey 設定而異；如需即時更新，可在 Tampermonkey 手動檢查更新。
+**2026-11-16 起，選關與戰利品已整合為同一支腳本。** 請在 Tampermonkey 將戰利品更新到 v0.7.4；原『文字重進』已更新改為 v2.1.0 的獨立巡走／磁鐵腳本，不再負責重進，自動重進改由右下角戰利品面板內的「重進」開關與關卡選單控制（不再顯示右上角固定視窗）。其餘巫師選技及森林採集維持獨立。安裝前先停用重複用途舊版腳本。後續更新時保留檔名與網址，增加腳本 `@version`，上傳覆寫到 `main`，Tampermonkey 依設定定期檢查 `@updateURL` 並取得 `@downloadURL`。更新頻率依瀏覽器與 Tampermonkey 設定而異；如需即時更新，可在 Tampermonkey 手動檢查更新。
 
 ## 安全與已知問題
 
@@ -88,3 +88,12 @@ HANS 在高怪量／高難度時可能顯示「◆ 高難度提醒」，內容�
 - 新巡走啟用時會嘗試開啟右下角「3分鐘刷卡」，並嘗試停止其他移動腳本。仍建議手動停用或關閉長場巡走 v2.1.0、舊森林採集 v1.9.2，避免兩支同時操作方向鍵。
 - 左側「HANS 3分巡走」按鈕或 **Shift+7** 開關；右下角「重進」仍須開啟並選好對應關卡。一般完整通關／長場模式可以關閉本腳本並關閉「3分鐘刷卡」。
 - 此為程式模擬測試與 HANS 截圖推定的 DOM 邏輯，尚未實測真正遊戲內磁鐵拾取、Lv30 免翻牌及中途捨棄後卡片是否保留。避免直接長時間無人值守，應先核對第一輪背包與收益。
+
+## v0.7.4 精簡掉落提示即時監聽
+
+- 新增專門監聽小地圖下方短暫掉落提示的 DOM MutationObserver 處理流程，不再只靠完整掉落彈窗／結算畫面。
+- 例如畫面顯示「傳說 茶拂短劍」時，讀取可見品質、品名並存進原戰利品紀錄，來源標示「精簡掉落提示」。同一個提示的動畫更新不重複記錄；提示短暫重建時有基本去重。
+- 右下角戰利品標題新增「精簡 N」本場計數；傳說（金裝）沿用原先的 Discord 即時通知；結算總表與場次 CSV 增加精簡提示筆數。
+- 若結算畫面縮圖仍有可讀名稱，會和本場精簡提示紀錄比對以減少重複計算。
+- **限制：** 只有在提示文字實際存在網頁 DOM 時才能擷取。若提示完全繪製在 Canvas 上或文字出現時間短於一次 DOM 更新，腳本無法保證辨識；截圖本身不足以確認 HANS 的實際實作，仍需在遊戲內驗證。
+- 目前不從精簡提示猜測未顯示的 TIER、屬性、是否回收／保留；本功能也無法恢復被系統自動販售的裝備。

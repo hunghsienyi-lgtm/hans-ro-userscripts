@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HANS RO｜三分鐘刷卡巡走｜先走30秒返點停30秒＋Lv30停走
 // @namespace    hunghung-ro-local-tools
-// @version      1.0.2
+// @version      1.0.3
 // @description  HANS短場：開場巡走30秒後回原點定點打30秒、再找磁鐵；Lv30立刻停止亂走並返點，Lv30最後一張技能照選、Lv31起不再翻牌；3:00磁鐵保留。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-idle
@@ -284,6 +284,9 @@
       if(!run.wasOutside){reset();run.wasOutside=true;}
       move();info('等待下一場出征');return;
     }
+    // 升級視窗可能讓小地圖停止更新：優先檢查 Lv30／Lv31，
+    // 不能因小地圖座標超過950ms未刷新就漏掉最後一次升級事件。
+    if(run.started)stopCardFlips(t);
     const clock=gameClock();
     if(clock===null){move();info('等待遊戲計時');return;}
     if(!next||!shown(next)||!player||t-playerAt>950){move();info('等待小地圖人物座標');return;}

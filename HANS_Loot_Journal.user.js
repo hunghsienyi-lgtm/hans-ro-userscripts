@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HANS RO 戰利品全紀錄｜金色通知＋每場總表
 // @namespace    ro-local-loot-journal
-// @version      0.6.4
+// @version      0.6.5
 // @description  HANS 選關＋戰利品：自動向下掃描全部遠征關卡，右下角切換目標；結算封存再重進、難度與戰利品統計。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.6.4';
+  const VERSION = '0.6.5';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -557,9 +557,9 @@
     ui.style.cssText='position:fixed;right:7px;bottom:8px;z-index:2147483647;max-width:calc(100vw - 14px);'+
       'font:12px/1.45 system-ui,sans-serif;color:#fff;background:#203452f0;border:1px solid #98b5db;'+
       'border-radius:8px;padding:6px;box-shadow:0 3px 12px #0007';
-    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.6.4 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
+    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.6.5 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
       <div id="roj4-menu" hidden style="width:265px;max-width:80vw;max-height:60vh;overflow-y:auto;padding-top:6px">
-        <div style="font-size:10px;opacity:.78">HANS 整合 v0.6.4 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
+        <div style="font-size:10px;opacity:.78">HANS 整合 v0.6.5 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
         <div id="roj4-discord">Discord：開｜待送 0</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
           <button id="roj4-toggle">暫停紀錄</button><button id="roj4-notify">關閉 DC</button>
@@ -670,6 +670,15 @@
     opt.value=key;opt.textContent=name+(level?' · Lv '+level:'')+(unlocked?'':'（未解鎖）');
     opt.disabled=!unlocked;
     if(!current)picker.appendChild(opt);
+    // 依 HANS 畫面的 Lv 起始等級排序，讓低等級舊關卡排在前面，而不是只排在斐揚之後。
+    const keep=picker.value;
+    const stageLevel=op=>{
+      const m=String(STAGES[op.value]?.level||'').match(/^(\d+)/);
+      return m?Number(m[1]):Number.POSITIVE_INFINITY;
+    };
+    const all=[...picker.options].sort((a,b)=>stageLevel(a)-stageLevel(b));
+    for(const item of all)picker.appendChild(item);
+    if(keep&&[...picker.options].some(x=>x.value===keep))picker.value=keep;
     return key;
   }
   const levelPattern=/\bLv\.?\s*(\d+)\s*[-–—~～]\s*(\d+)\b/i;
@@ -704,7 +713,7 @@
     return out;
   }
   const catalog={running:false,complete:false,scroll:null,steps:0,observed:new Set(),
-    searchName:'',searchSteps:0};
+    searchName:'',searchSteps:0,topReadyAt:0,topConfirmed:false};
   function findListScroll(rows){
     for(let p=rows[0]?.el,i=0;p&&i<14;p=p.parentElement,i++){
       const r=rct(p);
@@ -729,12 +738,22 @@
   function scanAllStages(){
     if(!catalog.complete&&!catalog.running){
       catalog.running=true;catalog.steps=0;catalog.observed=new Set();
-      // 無論目前捲到哪裡，都從關卡列表最上方開始掃到最下面。
+      catalog.topConfirmed=false;catalog.topReadyAt=Date.now()+450;
+      // 無論目前捲到哪裡，都先從關卡列表最上方開始掃描，不漏掉以前的低等關卡。
       catalog.scroll=findListScroll(stageRows());
       if(catalog.scroll)catalog.scroll.scrollTop=0;
     }
     if(!catalog.running)return;
-    const rows=readStageCatalog(),el=catalog.scroll;
+    const el=catalog.scroll;
+    // 捲回頂端後等待虛擬化清單更新。不能同一個 tick 就往下移，否則會漏掉最前面的卡片。
+    if(!catalog.topConfirmed){
+      if(!el){catalog.running=false;catalog.complete=false;
+        tell('無法定位遠征清單捲動區，暫不宣稱已掃描全部關卡');return;}
+      if(el.scrollTop>2){el.scrollTop=0;catalog.topReadyAt=Date.now()+450;return;}
+      if(Date.now()<catalog.topReadyAt)return;
+      catalog.topConfirmed=true;
+    }
+    const rows=readStageCatalog();
     if(!el||catalog.steps>=70||el.scrollTop>=el.scrollHeight-el.clientHeight-3){
       catalog.running=false;catalog.complete=true;
       if(el)el.scrollTop=0;
@@ -749,6 +768,7 @@
   function stageExplorerTick(){
     if(!expeditionOpen()){
       catalog.running=false;catalog.complete=false;catalog.scroll=null;
+      catalog.topConfirmed=false;catalog.topReadyAt=0;
       catalog.searchSteps=0;catalog.searchName='';return;
     }
     scanAllStages();

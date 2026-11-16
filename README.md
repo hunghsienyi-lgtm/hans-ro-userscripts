@@ -9,8 +9,8 @@
 | 二轉巫師：五核心＋目標／衝擊；三分鐘巡走 Lv30 最後技能照選、Lv31 後免翻牌 | 1.22 | [HANS_Wizard_AutoSkill.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Wizard_AutoSkill.user.js) |
 | 斐揚森林：首次 1:00、之後每分鐘採集 | 1.9.2 | [HANS_Forest_Magnet_Loot.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Forest_Magnet_Loot.user.js) |
 | **開局巡走／2、3、6 分鐘與之後每 2 分鐘找磁鐵／Boss 繼續採集／Lv120 免翻牌**（覆蓋原文字重進腳本） | **2.1.0** | [HANS_Payon_Auto_Reenter.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Payon_Auto_Reenter.user.js) |
-| **三分鐘刷卡專用巡走**：走 30 秒、返點站打 30 秒、Lv30 停止亂走、3:00 磁鐵 | **1.0.3** | [HANS_ThreeMinute_Magnet_Patrol.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_ThreeMinute_Magnet_Patrol.user.js) |
-| **選關＋戰利品整合版（右下角）**：每場重進下滾10次＋精簡掉落即時記錄、3 分鐘磁鐵協調、選關、Discord、場次 CSV | **0.7.6** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
+| **三分鐘刷卡專用巡走**：走到 Lv30 才返點、站打 30 秒、Lv31 免翻牌、3:00 磁鐵 | **1.0.4** | [HANS_ThreeMinute_Magnet_Patrol.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_ThreeMinute_Magnet_Patrol.user.js) |
+| **選關＋戰利品整合版（右下角）**：死亡結算自動返回＋每場下滾10次＋精簡掉落、3 分鐘磁鐵協調、選關、Discord、場次 CSV | **0.7.7** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
 
 **2026-11-16 起，選關與戰利品已整合為同一支腳本。** 請在 Tampermonkey 將戰利品更新到 v0.7.4；原『文字重進』已更新改為 v2.1.0 的獨立巡走／磁鐵腳本，不再負責重進，自動重進改由右下角戰利品面板內的「重進」開關與關卡選單控制（不再顯示右上角固定視窗）。其餘巫師選技及森林採集維持獨立。安裝前先停用重複用途舊版腳本。後續更新時保留檔名與網址，增加腳本 `@version`，上傳覆寫到 `main`，Tampermonkey 依設定定期檢查 `@updateURL` 並取得 `@downloadURL`。更新頻率依瀏覽器與 Tampermonkey 設定而異；如需即時更新，可在 Tampermonkey 手動檢查更新。
 
@@ -112,3 +112,9 @@ HANS 在高怪量／高難度時可能顯示「◆ 高難度提醒」，內容�
 - 新版增加**戰鬥計時歸零時的實際新局偵測**，每局最多補排一次下滾，預設下滾 10 次；保留手動／自動入場原有排程與跨頁重新整理恢復。
 - 只有自動重進開啟或本次已明確入場有待縮放任務時啟動；排除升級選卡、高難度確認、主城、暫停和結算畫面。升級選卡暫時蓋住畫面會短暫等待，最多 25 秒，不會把剩餘滾輪直接丟掉。
 - Boss 倒數的計時變化不視為新局，以免打王時突然再次下滾。模擬連續短場重進三次各觸發一次排程；**瀏覽器合成 WheelEvent 是否改變 HANS 內視角仍須現場驗證**。
+
+## 2026-11-16：死亡重進／三分鐘巡走 Lv30 修正
+
+- 整合版 **v0.7.7**：把實際 HANS 結算標題「你死了」加入辨識。死亡時如果只有「獲得的卡片」沒有「獲得的掉落」，仍可在基本等待（至少約 5.2 秒）及卡片／戰績穩定後封存並按「返回角色」。畫面一直不完整最多約 15.5 秒記警告放行。繼續使用原本的自動選關與進圖下滾10次。
+- 三分鐘巡走 **v1.0.4**：移除固定走 30 秒就返點的條件，改為**未達 Lv30 持續巡走拾經驗**，Lv30 才返回開場原點並站打約 30 秒。Lv30 最後一張技能依巫師選技 v1.22 正常選，Lv31 升級畫面才按「之後不再翻牌」。3:00 第二次磁鐵與右下短場重進仍維持；若本場提前死亡或 3 分鐘捨棄流程啟動，則不保證該場能到 Lv30。
+- 已通過 JavaScript 語法與死亡結算的最小等待模擬測試，實際 HANS 網頁仍需測試「你死了 → 封存卡片 → 返回角色 → 重進」，以及 Lv25、Lv28 後是否繼續走。

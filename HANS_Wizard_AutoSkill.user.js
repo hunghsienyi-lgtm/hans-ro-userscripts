@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 二轉巫師｜五核心自動選技＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.17
-// @description  二轉巫師：霜凍之術、暴風雨、火／雷／冰箭；五核心額外目標絕對優先，缺技補齊，低效才重抽，耗盡後保底不中斷；寶箱尋寶率優先。
+// @version      1.18
+// @description  二轉巫師先學五核心，再優先追加目標；未齊先重抽找技能，耗盡後保底不中斷；寶箱尋寶率優先。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
 // @run-at       document-idle
@@ -12,7 +12,7 @@
 // ==/UserScript==
 (() => {
   'use strict';
-  if (document.getElementById('hans-mage-autoskill-v117')) return;
+  if (document.getElementById('hans-mage-autoskill-v118')) return;
   const potion = [/傷害藥水|damage potion|potion of damage/i, /範圍藥水|area potion|potion of area/i];
   const label = '巫師';
   const shown = el => {
@@ -52,7 +52,7 @@
     return gain;
   }
 
-  // v1.17：二轉五核心；分支天賦「三導管」本身不是局內技能，不在這裡選。
+  // v1.18：二轉五核心；分支天賦「三導管」本身不是局內技能，不在這裡選。
   const coreSkills = [
     {id:'frost', label:'霜凍之術', name:/霜凍之術|霜凍術|frost\s*(?:nova|spell)/i,
       slot:/frost(?:nova|spell)?|freezingspell|frostbite/i},
@@ -80,8 +80,10 @@
     const sockets=skillSlots(panel);
     const text=sockets?.textContent?.normalize('NFKC')||'';
     const m=text.match(/(?:技能|skills?)\s*(\d+)\s*\/\s*(\d+)/i);
+    const slots=[...(sockets?.querySelectorAll('.skill-slot')||[])];
     const hasOpen=!!sockets?.querySelector('.skill-slot.empty, .skill-slot[data-skill=""], .skill-slot:not([data-skill])');
-    const full=m ? Number(m[1]) >= Number(m[2]) : !hasOpen && !!sockets;
+    // 若沒有技能格元素及明確 x/y 計數，不能僅因 #lu-sockets 存在就誤判「滿格」。
+    const full=m ? Number(m[1]) >= Number(m[2]) : slots.length>0 && !hasOpen;
     const owned=new Set();
     for(const el of (sockets?.querySelectorAll('[data-skill],.skill-slot')||[])){
       const raw=[el.getAttribute('data-skill'),el.getAttribute('title'),el.getAttribute('aria-label'),
@@ -90,7 +92,8 @@
         if(s.slot.test(raw)||s.name.test(raw)) owned.add(s.id);
       }
     }
-    return {full,known:!!sockets,owned,open:m?Math.max(0,Number(m[2])-Number(m[1])):(hasOpen?1:0)};
+    return {full,known:!!sockets && (!!m || slots.length>0),owned,
+      open:m?Math.max(0,Number(m[2])-Number(m[1])):(hasOpen?1:0)};
   }
   function coreOrder(core) {return core ? coreSkills.findIndex(s=>s.id===core.id) : 99;}
   function numericStat(text, kind) {
@@ -103,14 +106,16 @@
   }
   function scoreSkill(card,info){
     const core=coreOf(card), newSkill=isNew(card), text=read(card,'.pk-lines').normalize('NFKC');
-    // 只有五大核心加目標，才是最高級別；且不能在技能格已滿時誤選新技能。
+    // v1.18：先拿缺少的五大核心技能；五核心齊全後才把 +目標列為第一優先。
+    // 即使卡片上同時寫有 +目標，只要它屬於「新技能」，仍按補技能處理。
     if(newSkill && info.full) return {score:-Infinity,reason:'技能格已滿'};
+    if(newSkill){
+      if(core && (!info.known || !info.owned.has(core.id)))
+        return {score:120000+(5-coreOrder(core))*100,reason:`先補核心：${core.label}`};
+      return {score:-Infinity,reason:'非核心或重複新技能：僅保底'};
+    }
     const targets=core ? targetGain(card) : 0;
     if(core && targets>0) return {score:100000+targets*1000+(5-coreOrder(core)),reason:`核心 +目標 ${targets}`};
-    if(newSkill){
-      if(core) return {score:80000+(5-coreOrder(core))*100,reason:`補核心：${core.label}`};
-      return {score:-Infinity,reason:'非核心新技能：僅保底'};
-    }
     if(core){
       const haste=/(?:急速|冷卻|cooldown|haste)/i.test(text);
       const damage=/(?:傷害|damage|dmg)/i.test(text);
@@ -128,6 +133,22 @@
         reason:'既有非核心強化保底'};
     }
     return {score:-Infinity,backup:100,reason:'其他強化保底'};
+  }
+  // 補技能階段：技能格尚有空位，而且能讀到仍缺少的五核心技能。
+  // 這時即使候選有核心 +目標，也先尋找「新技能卡」；找不到就先重抽整組。
+  // 滿格（含被保底非核心佔滿）即結束補技能階段，避免追求不可能再取得的技能。
+  function collectingCoreSkills(info){
+    return info.known && !info.full && coreSkills.some(s=>!info.owned.has(s.id));
+  }
+  function bestSkillChoice(cards,info){
+    const collecting=collectingCoreSkills(info);
+    const scored=cards.map(card=>({card,...scoreSkill(card,info)}));
+    const candidates=collecting ? scored.filter(x=>{
+      const core=coreOf(x.card);
+      return isNew(x.card) && core && !info.owned.has(core.id);
+    }) : scored;
+    const chosen=candidates.filter(x=>Number.isFinite(x.score)).sort((a,b)=>b.score-a.score)[0];
+    return {collecting,chosen};
   }
   function fallbackSkillScore(card,info){
     const core=coreOf(card), fresh=isNew(card);
@@ -233,7 +254,7 @@
     if (message===lastDiagnostic) return;
     lastDiagnostic=message;
     if (button) button.title='Shift+1 切換；目前：'+message;
-    console.info('[HANS 巫師 v1.17]',message);
+    console.info('[HANS 巫師 v1.18]',message);
   }
   let nextRerollAt=0, pending=null, lastChoiceAt=0, lastChoiceKey='',choiceTries=0;
   const attempts=new WeakMap();
@@ -317,10 +338,10 @@
       if(backup)chooseCard(backup,'寶箱無可用重抽：保底');return;
     }
     const info=slotInfo(panel);
-    const scored=cards.map(card=>({card,...scoreSkill(card,info)}));
-    const chosen=scored.filter(x=>Number.isFinite(x.score)).sort((a,b)=>b.score-a.score)[0];
+    const {collecting,chosen}=bestSkillChoice(cards,info);
     if(chosen){chooseCard(chosen.card,chosen.reason);return;}
-    // 當核心全滿或無法取得時，不為不可能補到的核心反覆空轉；僅在無合格卡時重抽。
+    // 尚缺核心且有空位：優先重抽尋找新技能，不能提前拿目標／傷害強化。
+    // 五格已滿：停止追缺少的技能，改按核心 +目標／增益排序。
     if(performance.now()<nextRerollAt)return;
     const deck=rerollButton(panel,'#pk-bar button,.pk-acts button,.pk-actions button,#picker button',
       /^(重抽整組|重抽全部|重抽卡組|rerolldeck|rerollall)$/i);
@@ -328,12 +349,12 @@
       const t=deck.textContent.normalize('NFKC'),old=attempts.get(deck);
       attempts.set(deck,{text:t,count:old?.text===t?old.count+1:1});
       nextRerollAt=performance.now()+1500;
-      diagnostic('沒有合格核心卡：重抽整組 '+t.trim());deck.click();return;
+      diagnostic((collecting?'五核心未齊，尋找缺少的新技能：':'沒有合格核心卡：')+'重抽整組 '+t.trim());deck.click();return;
     }
     // B 方案：耗盡重抽後優先已學技能強化，才選非核心新技能；永不僵住。
     const best=cards.reduce((a,b)=>!a||fallbackSkillScore(b,info)>fallbackSkillScore(a,info)?b:a,null);
     if(best && Number.isFinite(fallbackSkillScore(best,info)))
-      chooseCard(best,'無可用重抽：保底不中斷');
+      chooseCard(best,collecting?'核心尚未齊、重抽耗盡：保底不中斷':'無可用重抽：保底不中斷');
     else diagnostic('技能欄位不可用／候選全失效；等待手動確認');
   }
   function fallbackChestRank(card) {
@@ -344,20 +365,20 @@
   }
   const safeTick=()=>{try{tick();}catch(error){
     diagnostic('腳本錯誤：'+String(error?.message||error));
-    console.error('[HANS 巫師 v1.17]',error);
+    console.error('[HANS 巫師 v1.18]',error);
   }};
   function enable(on){
     clearInterval(timer);
     timer=on?setInterval(safeTick,400):null;
-    button.textContent=label+'選技：'+(on?'開':'關')+' v1.17';
+    button.textContent=label+'選技：'+(on?'開':'關')+' v1.18';
     button.style.background=on?'#186442':'#384455';
     diagnostic(on?'已開啟，等待選卡畫面':'已關閉；按鈕或 Shift+1 開啟');
   }
   function mount(){
     if(!document.body){setTimeout(mount,100);return;}
-    if(document.getElementById('hans-mage-autoskill-v117'))return;
+    if(document.getElementById('hans-mage-autoskill-v118'))return;
     button=document.createElement('button');button.type='button';
-    button.id='hans-mage-autoskill-v117';
+    button.id='hans-mage-autoskill-v118';
     button.style.cssText='position:fixed;left:8px;bottom:84px;z-index:2147483647;color:white;border:1px solid white;border-radius:5px;padding:5px 8px;cursor:pointer';
     button.onclick=()=>{
       const on=timer===null;

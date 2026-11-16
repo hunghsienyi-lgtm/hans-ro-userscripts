@@ -10,7 +10,7 @@
 | 斐揚森林：首次 1:00、之後每分鐘採集 | 1.9.2 | [HANS_Forest_Magnet_Loot.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Forest_Magnet_Loot.user.js) |
 | **開局巡走／2、3、6 分鐘與之後每 2 分鐘找磁鐵／返點失敗安全停靠／Boss 繼續採集／Lv130 免翻牌**（覆蓋原文字重進腳本） | **2.2.0** | [HANS_Payon_Auto_Reenter.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Payon_Auto_Reenter.user.js) |
 | **三分鐘刷卡專用巡走**：走到 Lv30 才返點、站打 30 秒、Lv31 免翻牌、3:00 磁鐵 | **1.0.4** | [HANS_ThreeMinute_Magnet_Patrol.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_ThreeMinute_Magnet_Patrol.user.js) |
-| **選關＋戰利品整合版（右下角）**：死亡結算自動返回＋每場下滾10次＋精簡掉落、3 分鐘磁鐵協調、選關、Discord、場次 CSV | **0.7.7** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
+| **選關＋戰利品整合版（右下角）**：金色不逐件通知、每場統一匯報＋死亡結算返回＋下滾10次、3 分鐘磁鐵協調、選關、Discord、場次 CSV | **0.7.8** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
 
 **2026-11-16 起，選關與戰利品已整合為同一支腳本。** 請在 Tampermonkey 將戰利品更新到 v0.7.4；原『文字重進』已更新改為 v2.1.0 的獨立巡走／磁鐵腳本，不再負責重進，自動重進改由右下角戰利品面板內的「重進」開關與關卡選單控制（不再顯示右上角固定視窗）。其餘巫師選技及森林採集維持獨立。安裝前先停用重複用途舊版腳本。後續更新時保留檔名與網址，增加腳本 `@version`，上傳覆寫到 `main`，Tampermonkey 依設定定期檢查 `@updateURL` 並取得 `@downloadURL`。更新頻率依瀏覽器與 Tampermonkey 設定而異；如需即時更新，可在 Tampermonkey 手動檢查更新。
 
@@ -129,3 +129,10 @@ HANS 點選「之後不再翻牌」後會出現「已關閉翻牌（這張選完
 - **免翻牌門檻改為 Lv130**，不再需要等 6:00 磁鐵完成；Lv129 不處理，Lv130 會按「之後不再翻牌」。畫面上當次最後一張技能仍需由巫師選技 v1.23 選完。
 - 提前讀取 Lv130 選卡畫面，即使小地圖停止刷新也能觸發免翻牌。保留 2／3／6／8／10／12／14 分鐘磁鐵及 Boss 磁鐵監看。
 - 這次只更動原長時間巡走 `HANS_Payon_Auto_Reenter.user.js`；三分鐘巡走 v1.0.4 未更動。模擬測試涵蓋正常返點、超時後安全停靠、繞路失敗後安全停靠、Lv129／130／131；實際地圖導航仍需在 HANS 測試。
+
+## v0.7.8：Discord 僅每場結束統一匯報
+
+- 傳說（金色）掉落仍即時寫進本機戰利品清單和 CSV，**不再逐件發送 Discord 通知**。
+- 只有**每場完整通關、死亡結算、三分鐘主動捨棄**等封存時，才將該場已辨識的所有品質裝備及卡片整理成 Discord 戰利品總表；內容太長時才依 Discord 字數限制分段。
+- 更新時會從尚未送出的舊佇列移除「金色｜」逐件通知；保留已排隊的本場總表與手動連線測試訊息。已送出的 Discord 訊息不回收。
+- 面板顯示「僅每場結束總表」，其他選關、縮放、精簡掉落與磁鐵排程維持原狀。

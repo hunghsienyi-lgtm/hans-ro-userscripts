@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         HANS RO｜開局巡走＋每2分鐘磁鐵＋Boss持續尋磁鐵＋Lv120免翻牌
+// @name         HANS RO｜長時間巡走＋磁鐵｜返點失敗自動安全停靠＋Lv130免翻牌
 // @namespace    hunghung-ro-local-tools
-// @version      2.1.0
-// @description  HANS：前60秒巡走、1分返點；2／3／6／8／10／12／14分尋磁鐵並返點；Boss階段持續找磁鐵；六分鐘返點且Lv120後免翻牌。
+// @version      2.2.0
+// @description  HANS長場：返原點超時改在現位置安全停靠、繼續打怪與磁鐵排程，避免永久卡住；Lv130即點「之後不再翻牌」，當次仍選完。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        none
@@ -20,7 +20,7 @@
   const OPT={
     tickMs:140, clockPollMs:400, firstMinute:60, magnetMinutes:[120,180,360],
     repeatStartS:480, repeatEveryS:120, repeatLastS:840, bossMagnetRetryMs:2200,
-    levelSkip:120, magnetSearchMaxMs:35000, pickupConfirmMs:550,
+    levelSkip:130, magnetSearchMaxMs:35000, pickupConfirmMs:550,
     magnetReach:3.4, homeReach:2.8, magnetRadius:68,
     returnMaxMs:42000, progressTimeoutMs:2800, detourMs:850,
     maxDetours:4, magnetTargetStallMs:3000, patrolStepMs:1050, missedWindowS:10
@@ -41,7 +41,7 @@
   const button=document.createElement('button');
   button.id=UI_ID;button.type='button';
   button.style.cssText='position:fixed;left:8px;bottom:120px;z-index:2147483647;background:#384455;color:#fff;border:1px solid #eee;border-radius:5px;padding:5px 8px;font:12px system-ui,sans-serif;cursor:pointer;max-width:min(360px,80vw);text-align:left';
-  button.title='Shift+6 開關；0–1分巡走、1分返點；2／3／6分及之後每2分找磁鐵返點，Boss階段也追磁鐵；六分完成且Lv120才停止翻牌。';
+  button.title='Shift+6 長場巡走；1分返點，2、3、6分及之後每2分鐘找磁鐵。若返點路徑不通，改在目前位置定點打怪；Lv130停止後續翻牌。';
   button.setAttribute('aria-keyshortcuts','Shift+6');
   document.body?.appendChild(button);
   function status(s){button.textContent='HANS 巡走｜'+s;}
@@ -56,7 +56,8 @@
     patrolStep:0,patrolUntil:0,target:null,bestGap:Infinity,progressAt:0,
     detours:0,detourKey:'',detourUntil:0,seekAt:0,returnAt:0,returnBest:Infinity,
     returnProgressAt:0,returnDetours:0,returnDetourUntil:0,returnDetourKey:'',
-    magnetObserved:null,blocked:[],skipClicked:false,skipTries:0,failed:false
+    magnetObserved:null,blocked:[],skipClicked:false,skipTries:0,failed:false,
+    homeFallbacks:0,usingFallbackHome:false
   };
   function move(keys=''){
     for(const key of [...held])if(!keys.includes(key)){
@@ -133,7 +134,8 @@
       bestGap:Infinity,progressAt:0,detours:0,detourKey:'',detourUntil:0,
       seekAt:0,returnAt:0,returnBest:Infinity,returnProgressAt:0,
       returnDetours:0,returnDetourUntil:0,returnDetourKey:'',magnetObserved:null,
-      blocked:[],skipClicked:false,skipTries:0,failed:false
+      blocked:[],skipClicked:false,skipTries:0,failed:false,
+      homeFallbacks:0,usingFallbackHome:false
     });
   }
   function startRound(seconds){
@@ -162,15 +164,30 @@
   function park(now){
     move();round.mode='park';round.target=null;round.patrolUntil=0;
     if(round.part==='360')round.sixComplete=true;
-    status('原地刷怪｜已返點，六分後每2分鐘尋磁鐵，Boss仍追磁鐵');
+    round.failed=false;
+    status(round.usingFallbackHome?
+      '原點路徑受阻｜已改就地定點，後續磁鐵照常執行（安全停靠 '+round.homeFallbacks+' 次）':
+      '已返回原點｜原地打怪，六分後每2分鐘尋磁鐵，Boss仍追磁鐵');
+  }
+  function fallbackPark(now){
+    // 不再進入永久 failed 狀態；回家路線走不通就停止按方向鍵並固定此處。
+    // 用目前實際可見的玩家座標重設定點，讓下一個磁鐵行程仍能開始及返回。
+    move();
+    if(!player||!Number.isFinite(player[0])||!Number.isFinite(player[1])){
+      status('無法取得玩家座標，停止移動並等待小地圖恢復');return;
+    }
+    round.home=[...player];
+    round.homeFallbacks++;
+    round.usingFallbackHome=true;
+    park(now);
   }
   function driveHome(now){
     if(!player||!round.home){move();status('等待返點座標');return;}
     const gap=dist(player,round.home);
     if(gap<=OPT.homeReach){park(now);return;}
     if(now-round.returnAt>OPT.returnMaxMs||round.returnDetours>OPT.maxDetours){
-      move();round.mode='failed';round.failed=true;
-      status('返點超時，暫停移動避免撞牆');return;
+      fallbackPark(now);
+      return;
     }
     if(now<round.returnDetourUntil){move(round.returnDetourKey);return;}
     if(round.returnDetourUntil){round.returnDetourUntil=0;round.returnBest=gap;round.returnProgressAt=now;}
@@ -271,11 +288,12 @@
     return {panel:p,level:Number(m[1])};
   }
   function maybeDisableCards(){
-    // 必須 6 分鐘採集已經返回原地，且本局 Level Up 達到 Lv120。
-    if(!round.started||!round.sixComplete||round.skipClicked||round.skipTries>=3)return;
+    // 長場在 Lv130 當下停止未來的升級翻牌，不須等6:00磁鐵。
+    // 眼前最後一張卡仍由巫師選技腳本選完，避免 Lv130 畫面被留在原地。
+    if(!round.started||round.skipClicked||round.skipTries>=3)return;
     const info=levelUpPanel();
     if(!info||info.level<OPT.levelSkip)return;
-    // 按鈕可能在選卡容器外的右上角，因此在確定是 Lv120 升級畫面後允許全頁尋找。
+    // 按鈕可能在選卡容器外的右上角，因此在 Lv130 達標時允許全頁尋找。
     const stop=[...info.panel.querySelectorAll('button,[role="button"]'),
       ...document.querySelectorAll('button,[role="button"]')]
       .find(b=>visible(b)&&/^(?:之後不再翻牌|之后不再翻牌)$/.test(norm(b.textContent||'')));
@@ -327,6 +345,9 @@
     }
     const secs=readGameTime();
     if(secs===null){move();status('等待遊戲計時／地圖');return;}
+    // Level Up 暫停時小地圖可能短暫停止繪圖；先處理 Lv130 免翻牌，
+    // 不依賴小地圖位置一定在950ms內刷新。
+    if(round.started)maybeDisableCards();
     if(!next||!visible(next)||!player||now-lastPlayerAt>950){move();status('等待小地圖座標');return;}
     if(!round.started){
       if(secs>45){move();status('已進行 '+Math.floor(secs/60)+':'+String(secs%60).padStart(2,'0')+'，下一場開局再執行');return;}
@@ -335,8 +356,7 @@
     // Boss 結束時 HUD 也可能跳回 0:15，不能把它誤認為下一場開局。
     // 正常重進經過主城／選關時會由 outsideRun 重設，這裡不憑時間跳轉重新開場。
     round.prevSeconds=round.seconds;round.seconds=normalizeCombatSeconds(secs);
-    // 選卡視窗優先只處理「不再翻牌」；平常不搶巫師選技腳本。
-    maybeDisableCards();
+    // Lv130 選卡門檻已在小地圖座標檢查前處理；之後不再重複點擊。
     if(busy()||document.activeElement?.matches?.('input,textarea,select,[contenteditable="true"]')){
       move();return;
     }
@@ -379,7 +399,7 @@
     enabled=true;if(remember)try{sessionStorage.setItem(ENABLE_KEY,'1');}catch{}
     button.style.background='#186442';status('開｜等待下一場開局');
     clearInterval(interval);interval=setInterval(()=>{
-      try{loop();}catch(err){move();status('錯誤：已停止移動');console.error('[HANS 巡走 2.1.0]',err);}
+      try{loop();}catch(err){move();status('錯誤：已停止移動');console.error('[HANS 巡走 2.2.0]',err);}
     },OPT.tickMs);
   }
   button.onclick=()=>enabled?stop():start();

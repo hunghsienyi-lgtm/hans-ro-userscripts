@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.8.7
-// @description  v0.8.7：修正獨立視角工具被其他腳本蓋住；改置右上角、最上層、可拖曳與記住位置，維持自動開關及手動縮遠。
+// @version      0.8.8
+// @description  v0.8.8：修復 Tampermonkey 下滾事件建構可能拋錯、移除跨環境 view 參數、加入安全備援及面板即時錯誤原因。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.8.7';
+  const VERSION = '0.8.8';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -1422,32 +1422,61 @@
   }
   // 若遊戲公開了 OrbitControls 物件，直接呼叫控制器（不用偽造滑鼠事件）。
   // 不掃描私有閉包、不竄改遊戲狀態；找不到公開控制器即退回 WheelEvent。
+  // HANS 為瀏覽器遊戲；合成事件不能偽裝成真實滑鼠（isTrusted 永遠是 false）。
+  // 避免將沙盒 window 物件傳入 WheelEvent 的 view，某些 Tampermonkey 隔離環境會直接拋 TypeError。
   function directCameraZoomOut() {
-    const roots=[window.hansGame,window.roGame,window.game,window.gameEngine,
-      window.__HANS_GAME__,window.__RO_GAME__];
-    for(const root of roots){
-      if(!root || typeof root!=='object')continue;
-      const c=root.orbitControls||root.cameraControls||root.controls;
-      if(!c || !c.object || !(c.object.isCamera || c.object.isPerspectiveCamera || c.object.isOrthographicCamera)
-         || c.enabled===false || c.enableZoom===false || typeof c.dollyOut!=='function')continue;
-      try{c.dollyOut(1.12);if(typeof c.update==='function')c.update();return true;}catch{}
-    }
+    try{
+      const roots=[window.hansGame,window.roGame,window.game,window.gameEngine,
+        window.__HANS_GAME__,window.__RO_GAME__];
+      for(const root of roots){
+        try{
+          if(!root || typeof root!=='object')continue;
+          const c=root.orbitControls||root.cameraControls||root.controls;
+          if(!c || !c.object || !(c.object.isCamera || c.object.isPerspectiveCamera || c.object.isOrthographicCamera)
+             || c.enabled===false || c.enableZoom===false || typeof c.dollyOut!=='function')continue;
+          c.dollyOut(1.12);if(typeof c.update==='function')c.update();
+          return true;
+        }catch(e){console.debug('[HANS Zoom] 公開鏡頭 API 不適用，使用滾輪備援',e);}
+      }
+    }catch(e){console.debug('[HANS Zoom] 讀取公開鏡頭失敗，使用滾輪備援',e);}
     return false;
   }
-  let directZoomUsed=false;
-  function emitDownWheel(target){
-    if(directCameraZoomOut()){directZoomUsed=true;return;}
+  let directZoomUsed=false,zoomEventMode='尚未發送';
+  function emitDownWheel(target) {
+    if(directCameraZoomOut()){directZoomUsed=true;zoomEventMode='公開鏡頭控制器';return;}
     const r=rct(target);
-    const fallbackX=Math.round(r.left+r.width/2), fallbackY=Math.round(r.top+r.height/2);
+    const fallbackX=Math.round(r.left+r.width/2),fallbackY=Math.round(r.top+r.height/2);
     const x=Math.max(1,Math.min(innerWidth-2,zoomPoint?Math.round(zoomPoint.x*innerWidth):fallbackX));
     const y=Math.max(1,Math.min(innerHeight-2,zoomPoint?Math.round(zoomPoint.y*innerHeight):fallbackY));
     const hit=document.elementFromPoint(x,y);
-    const dest=hit && !hud.contains(hit) && !hit.closest('#minimap,#picker,#roj4-menu')?hit:target;
-    const event=new WheelEvent('wheel',{
-      bubbles:true,cancelable:true,composed:true,view:window,
-      deltaX:0,deltaY:ZOOM_DELTA,deltaZ:0,deltaMode:0,clientX:x,clientY:y
-    });
-    dest.dispatchEvent(event);
+    const dest=hit && !hud.contains(hit) && !hit.closest('#minimap,#picker,#roj4-menu,#hans-independent-zoom-panel')?hit:target;
+    const init={bubbles:true,cancelable:true,composed:true,
+      deltaX:0,deltaY:ZOOM_DELTA,deltaZ:0,deltaMode:0,clientX:x,clientY:y};
+    let event=null,constructedBy='';
+    const errs=[];
+    // 正常路徑：用 DOM 所屬 window 的建構子，完全不帶 view（防跨 realm TypeError）。
+    const constructors=[document.defaultView?.WheelEvent,window.WheelEvent].filter(Boolean);
+    for(const Ctor of [...new Set(constructors)]){
+      try{event=new Ctor('wheel',init);constructedBy='WheelEvent';break;}
+      catch(e){errs.push(String(e?.message||e));}
+    }
+    // 次要路徑：若 isolated world 不支援 WheelEvent，就用 Event 附上標準 delta 屬性。
+    if(!event){
+      try{
+        const Ctor=document.defaultView?.Event||window.Event;
+        event=new Ctor('wheel',{bubbles:true,cancelable:true,composed:true});
+        Object.defineProperties(event,{
+          deltaX:{value:0},deltaY:{value:ZOOM_DELTA},deltaZ:{value:0},
+          deltaMode:{value:0},clientX:{value:x},clientY:{value:y}
+        });
+        constructedBy='Event 備援';
+      }catch(e){errs.push(String(e?.message||e));}
+    }
+    if(!event)throw new Error('無法建立 wheel 事件：'+errs.join(' / ').slice(0,140));
+    try{
+      dest.dispatchEvent(event);
+      zoomEventMode=constructedBy;
+    }catch(e){throw new Error('dispatchEvent：'+String(e?.message||e));}
   }
   function checkEntryZoom() {
     if(!pendingZoomAt || zoomInProgress)return;
@@ -1463,7 +1492,7 @@
     }
     if(!zoomMapReadyAt){zoomMapReadyAt=Date.now();zoomNote('偵測到戰鬥地圖，準備下滾');}
     if(Date.now()-zoomMapReadyAt<ZOOM_READY_DELAY || Date.now()-pendingZoomAt<ZOOM_READY_DELAY)return;
-    zoomInProgress=true;directZoomUsed=false;
+    zoomInProgress=true;directZoomUsed=false;zoomEventMode='尚未發送';
     // 縮放完成後才清除排程；若升級翻牌短暫蓋住遊戲，繼續等待再滾，不直接丟失。
     let count=0, startedAt=Date.now();
     tell(`已進地圖，開始向下滾輪 ${ZOOM_STEPS} 次`);
@@ -1476,17 +1505,23 @@
         zoomNote('中止：戰鬥畫面超過25秒不可操作');
         tell('下滾中止：25秒內無法持續操作遊戲畫面');return;
       }
-      const target=zoomCanvas();
-      try{emitDownWheel(target);}catch(e){
-        console.warn('[HANS 整合選關] 滾輪事件發送失敗',e);
-        zoomInProgress=false;clearZoomPending();zoomNote('事件送出失敗，請看瀏覽器 Console');tell('滾輪事件發送失敗');return;
+      try{
+        const target=zoomCanvas();
+        emitDownWheel(target);
+      }catch(e){
+        console.warn('[HANS v0.8.8] 滾輪事件發送失敗',e);
+        zoomInProgress=false;clearZoomPending();
+        const problem=String(e?.name||'Error')+': '+String(e?.message||e);
+        zoomNote('失敗：'+problem.slice(0,115));
+        zoomStatus.title=problem;
+        tell('滾輪失敗：'+problem.slice(0,95));return;
       }
       count++;zoomSent=count;
-      zoomNote('縮遠 '+count+'/'+ZOOM_STEPS+' 次（'+(directZoomUsed?'直接鏡頭':zoomPoint?'校準滾輪':'合成滾輪')+'）');
+      zoomNote('縮遠 '+count+'/'+ZOOM_STEPS+' 次｜'+zoomEventMode+(zoomPoint?'｜已校準':'')+'（視角待實測）');
       tell(`進圖下滾：${count}/${ZOOM_STEPS}（實際視角需遊戲確認）`);
       if(count < ZOOM_STEPS){setTimeout(step,ZOOM_STEP_INTERVAL);}
       else{zoomInProgress=false;clearZoomPending();
-        zoomNote((forceZoom?'手動測試':'本局')+'完成 '+ZOOM_STEPS+' 次'+(directZoomUsed?'（公開鏡頭控制器）':'（合成滾輪，視角效果待測）'));
+        zoomNote((forceZoom?'手動測試':'本局')+'發送 '+ZOOM_STEPS+' 次｜'+zoomEventMode+'（視角待確認）');
         directZoomUsed=false;
         forceZoom=false;
         tell(`本局已送出 ${ZOOM_STEPS} 次下滾事件`);}

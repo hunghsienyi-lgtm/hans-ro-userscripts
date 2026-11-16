@@ -9,7 +9,7 @@
 | 二轉巫師：五核心＋目標／衝擊；三分鐘巡走 Lv30技能照選，Lv31先點免翻牌再完成眼前最後一張 | 1.23 | [HANS_Wizard_AutoSkill.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Wizard_AutoSkill.user.js) |
 | 斐揚森林：首次 1:00、之後每分鐘採集 | 1.9.2 | [HANS_Forest_Magnet_Loot.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Forest_Magnet_Loot.user.js) |
 | **長場巡走／1:55、2:55、5:55、之後每2分鐘前5秒找磁鐵／中途加入當前局／返點失敗安全停靠／Boss最後15秒只找磁鐵／Lv130 免翻牌**（覆蓋原文字重進腳本） | **2.3.0** | [HANS_Payon_Auto_Reenter.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Payon_Auto_Reenter.user.js) |
-| **三分鐘刷卡專用巡走**：走到 Lv30 才返點、站打 30 秒、Lv31 免翻牌、3:00 磁鐵 | **1.0.4** | [HANS_ThreeMinute_Magnet_Patrol.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_ThreeMinute_Magnet_Patrol.user.js) |
+| **三分鐘刷卡專用巡走**：Lv30返點站打30秒、0:55首顆、2:45起最後15秒只找磁鐵、Lv31免翻牌、3:00 磁鐵 | **1.0.5** | [HANS_ThreeMinute_Magnet_Patrol.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_ThreeMinute_Magnet_Patrol.user.js) |
 | **選關＋戰利品整合版（右下角）**：金色不逐件通知、每場統一匯報＋死亡結算返回＋下滾10次、3 分鐘磁鐵協調、選關、Discord、場次 CSV | **0.7.8** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
 
 **2026-11-16 起，選關與戰利品已整合為同一支腳本。** 請在 Tampermonkey 將戰利品更新到 v0.7.4；原『文字重進』已更新改為 v2.1.0 的獨立巡走／磁鐵腳本，不再負責重進，自動重進改由右下角戰利品面板內的「重進」開關與關卡選單控制（不再顯示右上角固定視窗）。其餘巫師選技及森林採集維持獨立。安裝前先停用重複用途舊版腳本。後續更新時保留檔名與網址，增加腳本 `@version`，上傳覆寫到 `main`，Tampermonkey 依設定定期檢查 `@updateURL` 並取得 `@downloadURL`。更新頻率依瀏覽器與 Tampermonkey 設定而異；如需即時更新，可在 Tampermonkey 手動檢查更新。
@@ -152,3 +152,11 @@ HANS 點選「之後不再翻牌」後會出現「已關閉翻牌（這張選完
 - 防誤觸：僅 Boss 倒數已確認時才啟動最後15秒規則，不將一般開局0:15誤認為Boss最後15秒。中途開啟立即接手、Lv130免翻牌、返點失敗安全停靠仍保留。
 - 此修改僅針對 **Shift+6 長時間巡走**；Shift+7 三分鐘巡走及選關／戰利品整合版未修改。
 - 已完成語法與獨立模擬測試（七次定時、Boss最後15秒有／無磁鐵、拾取後不返點與非Boss15秒不觸發）；實際 HANS 遊戲移動與磁鐵取得仍需測試。
+
+## v1.0.5 三分鐘巡走：整分提前5秒＋最後15秒只找磁鐵
+
+- **第一顆磁鐵**從 0:55 起可觸發，但仍遵守「先巡走到 Lv30、返回原點、確實站打30秒」的前置條件；因此 Lv30 較晚才到時，第一顆也會晚於0:55，不會強迫在0:55中斷升級。
+- **3:00 前最後15秒（2:45–3:00）** 提前進入只找磁鐵模式，包含原本應於2:55觸發的第二輪，不在2:55重置同一輪搜尋。最後階段若有磁鐵就移動追；沒有磁鐵就原地監看，不隨機走、不返點。即使正在返點、站打或還未Lv30也會被最後15秒規則接手。
+- 3:00 時若已沒有可追的磁鐵，就透過既有 `hans_ro_three_min_magnet_sync_v1` 回報 `done`，讓右下角三分鐘捨棄模式按其原本設定執行（例如預設3:20）。若正在追磁鐵，可延續搜尋，但最多35秒；達到時間上限就放行捨棄，不保證每次都找到磁鐵。
+- 後續翻牌規則維持：Lv30最後技能正常選、Lv31按「之後不再翻牌」，眼前那張仍需由巫師選技完成。長場 Shift+6 v2.3.0 不受此修改影響。
+- 已做腳本語法與模擬測試：2:45無磁鐵等待、2:55追磁鐵、3:00無磁鐵放行、拾取後不返點及不隨機巡走。HANS實際移動與磁鐵拾取仍需遊戲測試。

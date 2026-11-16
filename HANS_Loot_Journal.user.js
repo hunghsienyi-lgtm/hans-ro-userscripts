@@ -854,6 +854,177 @@
   let active = false, timer = null, state = '', lastAt=0, attempts={};
   let stageClickedAt=0, beforeStageWasStory=false, departAt=0, wildernessAt=0;
   const targetStage=()=>STAGES[picker.value]||STAGES.cave;
+
+  // 可選 3 分鐘短刷模式；只在本腳本的自動重進開啟時執行。
+  const SHORT_PREF_KEY='hans-ro-stage-loot-short3-v070';
+  const SHORT_PHASE_KEY='hans-ro-stage-loot-shortphase-v070';
+  const REENTRY_KEY='hans-ro-stage-loot-auto-reentry-v070';
+  const shortPrefs=(()=>{
+    try{
+      const x=JSON.parse(localStorage.getItem(SHORT_PREF_KEY)||'{}');
+      return {enabled:x?.enabled===true,grace:[0,10,20,30,45,60].includes(Number(x?.grace))?Number(x.grace):20};
+    }catch{return {enabled:false,grace:20};}
+  })();
+  const saveShortPrefs=()=>{try{localStorage.setItem(SHORT_PREF_KEY,JSON.stringify(shortPrefs));}catch{}};
+  const shortExit=(()=>{
+    try{
+      const x=JSON.parse(sessionStorage.getItem(SHORT_PHASE_KEY)||'null');
+      if(x&&Date.now()-Number(x.at)<120000 &&
+        ['escape','menu','discard','done'].includes(x.phase))return x;
+    }catch{}
+    return {phase:'idle',at:0,tries:0,lastAction:0,armed:false};
+  })();
+  const saveShortExit=()=>{try{
+    if(shortExit.phase==='idle')sessionStorage.removeItem(SHORT_PHASE_KEY);
+    else sessionStorage.setItem(SHORT_PHASE_KEY,JSON.stringify(shortExit));
+  }catch{}};
+  const resetShortExit=()=>{
+    Object.assign(shortExit,{phase:'idle',at:0,tries:0,lastAction:0,armed:false});
+    saveShortExit();
+  };
+  const shortToggle=document.createElement('button');
+  shortToggle.type='button';
+  shortToggle.title='3:00 到點後再等待小王緩衝秒數，接著按 ESC → 回到主選單 → 捨棄，再自動重進';
+  shortToggle.style.cssText='font:bold 11px sans-serif;padding:4px 7px;border:1px solid #c9dbed;border-radius:5px;cursor:pointer;color:white';
+  const shortGrace=document.createElement('select');
+  shortGrace.title='3:00 後多留幾秒打小王／撿卡。0 秒即 3:00 捨棄';
+  shortGrace.style.cssText='color:#18283b;background:white;padding:3px;border-radius:4px;font:11px sans-serif;max-width:125px';
+  for(const n of [0,10,20,30,45,60]){
+    const op=document.createElement('option');op.value=String(n);
+    op.textContent=n===0?'0秒（3:00）':'小王 +'+n+'秒';shortGrace.append(op);
+  }
+  shortGrace.value=String(shortPrefs.grace);
+  const shortGroup=document.createElement('div');
+  shortGroup.style.cssText='display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:6px';
+  shortGroup.append(shortToggle,shortGrace);
+  const shortHelp=document.createElement('div');
+  shortHelp.style.cssText='font:10px/1.35 sans-serif;color:#e9e0c6;margin:3px 0 0';
+  shortHelp.textContent='只在自動重進開啟時執行；捨棄可能影響未結算獎勵，卡片是否保留尚未確認';
+  function updateShortControls(){
+    shortToggle.textContent='3分鐘刷卡：'+(shortPrefs.enabled?'開':'關')+
+      (shortPrefs.enabled?'（3:'+String(shortPrefs.grace).padStart(2,'0')+'）':'');
+    shortToggle.style.background=shortPrefs.enabled?'#965420':'#5c6b82';
+    shortGrace.disabled=!shortPrefs.enabled;
+  }
+  shortToggle.addEventListener('click',()=>{
+    shortPrefs.enabled=!shortPrefs.enabled;saveShortPrefs();
+    if(!shortPrefs.enabled)resetShortExit();
+    updateShortControls();
+    tell(shortPrefs.enabled?'三分鐘刷卡已開：下一局從開場計時':'三分鐘刷卡已關閉');
+  });
+  shortGrace.addEventListener('change',()=>{
+    shortPrefs.grace=Number(shortGrace.value)||0;saveShortPrefs();updateShortControls();
+    tell('三分鐘刷卡調整為 3:00 +'+shortPrefs.grace+'秒');
+  });
+  updateShortControls();
+  // 從上方中央的遊戲計時 HUD 取值，不能把主城的 00:xx、選卡或現實時間當戰鬥時間。
+  function readCombatSeconds(){
+    const mini=document.querySelector('#minimap'),coords=document.querySelector('#minimap-coords');
+    if(!((mini&&shown(mini))||(coords&&shown(coords))))return null;
+    let best=null;
+    for(const e of document.querySelectorAll('span,b,strong,time,div')){
+      if(e.children.length>2||hud.contains(e)||e.closest('#'+UI_ID))continue;
+      const m=/^(\d{1,2}):([0-5]\d)$/.exec(String(e.textContent||'').trim());
+      if(!m||!shown(e))continue;
+      const r=rct(e),x=r.left+r.width/2,y=r.top+r.height/2;
+      if(r.width<12||r.width>185||r.height<8||r.height>75)continue;
+      if(x<innerWidth*.30||x>innerWidth*.70||y>Math.min(150,innerHeight*.24))continue;
+      const secs=Number(m[1])*60+Number(m[2]);
+      if(secs>20*60)continue;
+      const score=Math.abs(x-innerWidth/2)+Math.abs(y-25);
+      if(!best||score<best.score)best={secs,score};
+    }
+    return best?.secs??null;
+  }
+  function textHeadingVisible(re){
+    return [...document.querySelectorAll('h1,h2,h3,h4,header,div,span')].some(e=>
+      shown(e)&&!hud.contains(e)&&e.children.length<2&&
+      (e.textContent||'').length<80&&re.test(norm(e.textContent||'')));
+  }
+  function incompleteDialog(){
+    return !!findControl(/^(?:捨棄|舍弃)$/i)&&textHeadingVisible(/未完成的一局/);
+  }
+  function pauseDialog(){
+    return !!findControl(/^(?:回到主選單|回主選單|返回主選單)$/i)&&
+      textHeadingVisible(/暫停/);
+  }
+  function sendEsc(){
+    const evt={key:'Escape',code:'Escape',keyCode:27,which:27,bubbles:true,cancelable:true};
+    document.dispatchEvent(new KeyboardEvent('keydown',evt));
+    document.dispatchEvent(new KeyboardEvent('keyup',evt));
+  }
+  function shortPhase(phase){
+    shortExit.phase=phase;shortExit.at=Date.now();shortExit.lastAction=0;shortExit.tries=0;
+    saveShortExit();
+  }
+  function shortFail(reason){
+    tell(reason+'，已停止自動重進避免誤按');
+    enable(false);
+  }
+  function handleShortRun(){
+    if(!shortPrefs.enabled||!active)return false;
+    const now=Date.now(),incomplete=incompleteDialog(),paused=pauseDialog();
+    if(shortExit.phase==='done'){
+      if(incomplete){tell('已點捨棄，等待確認視窗關閉');return true;}
+      if(now-shortExit.at>18000){shortFail('捨棄後沒有返回主城');return true;}
+      if(findControl(W.talk)||expeditionOpen()||difficultyOpen()){
+        resetShortExit();return false;
+      }
+      tell('等待主城載入');return true;
+    }
+    if(shortExit.phase==='discard'){
+      if(incomplete){
+        const discard=findControl(/^(?:捨棄|舍弃)$/i);
+        if(discard&&shown(discard)&&now-shortExit.lastAction>1000&&shortExit.tries<3){
+          shortExit.tries++;shortExit.lastAction=now;saveShortExit();
+          discard.click();shortPhase('done');
+          tell('已按捨棄，準備重進同一關');return true;
+        }
+      }else if(paused){shortPhase('menu');return true;}
+      if(now-shortExit.at>20000)shortFail('未完成的一局沒有顯示捨棄按鈕');
+      else tell('等待未完成的一局 → 捨棄');
+      return true;
+    }
+    if(shortExit.phase==='menu'){
+      if(incomplete){shortPhase('discard');return true;}
+      const toMain=findControl(/^(?:回到主選單|回主選單|返回主選單)$/i);
+      if(paused&&toMain&&now-shortExit.lastAction>1200&&shortExit.tries<3){
+        shortExit.tries++;shortExit.lastAction=now;saveShortExit();
+        stageLootBridge.settleShortRun(shortExit.gameSeconds||180,targetStage().name);
+        toMain.click();shortPhase('discard');
+        tell('已按回到主選單，等待捨棄');return true;
+      }
+      if(now-shortExit.at>20000)shortFail('回到主選單沒有反應');
+      return true;
+    }
+    if(shortExit.phase==='escape'){
+      if(paused){shortPhase('menu');return true;}
+      if(now-shortExit.lastAction>1600&&shortExit.tries<4&&readCombatSeconds()!==null){
+        shortExit.tries++;shortExit.lastAction=now;saveShortExit();sendEsc();
+        tell('已送 ESC '+shortExit.tries+'/4，等待暫停畫面');
+      }
+      if(now-shortExit.at>12000)shortFail('ESC 未開啟暫停選單');
+      return true;
+    }
+    // 其他視窗、正常結算和玩家手動暫停時都不應退出副本。
+    if(incomplete){tell('偵測到手動未完成的一局，等待玩家處理');return true;}
+    if(paused)return true;
+    if(resultVisible()||difficultyOpen()||expeditionOpen()||findControl(W.back)||
+       findControl(W.talk)||document.hidden)return false;
+    const pickerPopup=document.querySelector('#picker');
+    if(pickerPopup&&shown(pickerPopup))return false;
+    const secs=readCombatSeconds();
+    if(secs===null)return false;
+    if(secs<=45&&!shortExit.armed){shortExit.armed=true;saveShortExit();}
+    if(!shortExit.armed){tell('3分鐘刷卡待命：下一場開局才開始');return false;}
+    if(secs<180+shortPrefs.grace)return false;
+    shortExit.gameSeconds=secs;shortPhase('escape');
+    shortExit.tries=1;shortExit.lastAction=Date.now();saveShortExit();
+    sendEsc();
+    tell('已達 '+Math.floor(secs/60)+':'+String(secs%60).padStart(2,'0')+'，送 ESC 準備捨棄');
+    return true;
+  }
+
   // 進圖後自動下滾：不改遊戲縮放 CSS，只送出與滑鼠滾輪方向相同的事件。
   // +deltaY = 向下滾；遊戲本身決定是放大還是縮小視角。
   const ZOOM_PENDING_KEY = 'hh-ro-expedition-enter-field-zoom-v18';

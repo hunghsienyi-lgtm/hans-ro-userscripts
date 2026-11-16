@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 戰利品全紀錄｜金色通知＋每場總表
 // @namespace    ro-local-loot-journal
-// @version      0.7.3
-// @description  三分鐘刷卡與0:30／3:00磁鐵巡走同步：3分鐘第二顆磁鐵先搜尋再捨棄；保留選關、難度、戰利品及入場確認。
+// @version      0.7.4
+// @description  HANS 小地圖下精簡掉落即時辨識並整合戰利品／Discord／場次 CSV，保留選關與3分鐘重進。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.7.3';
+  const VERSION = '0.7.4';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -89,7 +89,7 @@
     return currentRun;
   }
   function updateUI(){
-    if(countEl)countEl.textContent=`共 ${records.length}｜本場 ${runRecords().length}`;
+    if(countEl)countEl.textContent=`共 ${records.length}｜本場 ${runRecords().length}｜精簡 ${runRecords().filter(r=>/精簡掉落提示/.test(r.origin||'')).length}`;
     if(recentEl)recentEl.textContent=`最近：${lastRecord?`${lastRecord.name}（${typeName(lastRecord)}）`:'尚無'}`;
     if(discordEl)discordEl.textContent=`Discord：${settings.notify?'開':'關'}｜金色即時＋結算總表｜待送 ${outbox.length}${sending?'（發送中）':''}`;
     if(stateEl)stateEl.textContent=lastStatus;
@@ -210,6 +210,80 @@
     episodeSeen.add(key);lastCaptureKey=key;
     addRecord(data);
   }
+
+  // 專門偵測小地圖下的精簡掉落提示，避免完整掉寶彈窗不存在而漏記。
+  // 這裡只讀取瀏覽器 DOM 中真正出現的文字；如果是純 Canvas 繪圖則無法直接讀取。
+  const compactState={seen:new WeakMap(),recent:new Map(),count:0,lastText:'',lastAt:0};
+  const compactQuality=/^(?:[✦★⭐◆]?\s*)?(?:(?:拾取|撿到|撿起|獲得|取得|掉落)\s*[:：]?\s*)?(傳說|神話|史詩|稀有|優良|精良|優秀|高級|普通)\s*(?:裝備\s*)?[:：\s·|•\-—]*(.+)$/i;
+  function parseCompactToast(text){
+    const raw=norm(String(text||'').replace(/[\r\n\t]+/g,' '));
+    if(raw.length<4||raw.length>120)return null;
+    const m=raw.match(compactQuality);
+    if(!m)return null;
+    let name=norm(m[2].replace(/^[✓✔⭐★◆🗡️⚔️🛡️🎁📦\s:：·|•\-—]+/u,''));
+    name=name.replace(/\s*(?:已獲得|已取得|獲得成功)\s*$/,'').trim();
+    if(name.length<2||name.length>72||noise.test(name)||/^(?:裝備|道具|掉落|卡片|TIER\s*\d+|\d+[\d+\-%.]*)$/i.test(name))return null;
+    if(/(?:掉寶|裝備)\s*[×x]\s*\d/.test(name)||/^(?:設定|顯示|精簡|完整)/.test(name))return null;
+    const rarity=/優良|精良|優秀|高級/i.test(m[1])?'優良':m[1];
+    return {type:cardRe.test(name)?'卡片':'裝備',name,rarity,tier:null,
+      baseStats:[],attributes:[],rawText:'精簡掉落提示：'+raw,origin:'精簡掉落提示'};
+  }
+  function compactNearMinimap(el){
+    if(!(el instanceof Element)||!el.isConnected||!el.getClientRects().length)return false;
+    if(el.closest('#'+UI_ID+',#hh-payon-integrated-v06,#minimap,script,style,noscript'))return false;
+    const mini=document.querySelector('#minimap');
+    if(!mini||!mini.getClientRects().length)return false;
+    const mr=mini.getBoundingClientRect(),r=el.getBoundingClientRect();
+    if(mr.width<60||mr.height<60||r.width<24||r.width>420||r.height<12||r.height>105)return false;
+    const mid=r.left+r.width/2;
+    return r.top>=mr.bottom-32&&r.top<=mr.bottom+175 &&
+      mid>=mr.left-80&&mid<=mr.right+145;
+  }
+  function captureCompactCandidate(node){
+    if(!settings.running)return false;
+    let el=node?.nodeType===3?node.parentElement:node;
+    if(!(el instanceof Element))return false;
+    for(let depth=0;el&&depth<6;el=el.parentElement,depth++){
+      if(!compactNearMinimap(el))continue;
+      const text=String(el.innerText||el.textContent||'');
+      const parsed=parseCompactToast(text);
+      if(!parsed)continue;
+      const sig=[parsed.type,parsed.rarity,parsed.name].join('|');
+      if(compactState.seen.get(el)===sig)return false;
+      const now=Date.now();
+      compactState.seen.set(el,sig);
+      const last=compactState.recent.get(sig)||0;
+      if(now-last<450)return false;
+      compactState.recent.set(sig,now);
+      if(compactState.recent.size>120)
+        for(const [key,t] of compactState.recent)if(now-t>20000)compactState.recent.delete(key);
+      const rec=addRecord(parsed);
+      compactState.lastText=norm(text).slice(0,150);
+      compactState.lastAt=now;
+      if(rec){compactState.count++;lastDiagnostic='精簡掉落即時讀取：'+parsed.rarity+' '+parsed.name;}
+      return !!rec;
+    }
+    return false;
+  }
+  function captureCompactMutations(changes){
+    if(!settings.running)return;
+    const visited=new Set();
+    for(const ch of changes){
+      for(const node of [ch.target,...ch.addedNodes]){
+        const el=node?.nodeType===3?node.parentElement:node;
+        if(!(el instanceof Element)||visited.has(el))continue;
+        visited.add(el);captureCompactCandidate(el);
+      }
+      const target=ch.target?.nodeType===3?ch.target.parentElement:ch.target;
+      if(target instanceof Element&&compactState.seen.has(target)){
+        if(!parseCompactToast(String(target.innerText||target.textContent||''))||!visible(target))
+          compactState.seen.delete(target);
+      }
+      for(const node of ch.removedNodes||[])
+        if(node instanceof Element)compactState.seen.delete(node);
+    }
+  }
+
   // 精簡掉落可能沒有彈窗；結算縮圖記錄「看得到的數量」，無文字時不臆測品質或名稱。
   // 取最小包含合理數量圖片的區塊，避免將整頁商店／人物畫像一起計算。
   function resultSection(headingRe){
@@ -246,7 +320,7 @@
       const uniq=`${i}:${section.icons[i]}:${name}`;
       if(summaryDropSeen.has(uniq))continue;
       summaryDropSeen.add(uniq);
-      const previous=runRecords().filter(x=>x.name===name&&x.origin==='掉落彈窗').length;
+      const previous=runRecords().filter(x=>x.name===name&&/掉落彈窗|精簡掉落提示/.test(x.origin||'')).length;
       const nowInSummary=[...summaryDropSeen].filter(x=>x.endsWith(':'+name)).length;
       if(nowInSummary<=previous)continue;
       const rawQuality=section.qualities[i]||'';
@@ -302,13 +376,14 @@
   function summarizeResultsForExport(run){
     const items=records.filter(r=>r.runId===run.id);
     return {...run,recorded:items.length,goldRecorded:items.filter(isGold).length,
+      compactRecorded:items.filter(r=>/精簡掉落提示/.test(r.origin||'')).length,
       equipmentRecorded:items.filter(r=>r.type==='裝備').length,
       cardsRecorded:items.filter(r=>r.type==='卡片').length};
   }
   function exportRuns(){
     const headers=['場次','開始時間','結算時間','地圖','敵人數量%','敵人傷害%','敵人HP%','敵人速度%','事件數量%',
       '關卡Lv','掉寶倍率','裝備倍率','傳說率%','存活時間','擊殺怪物','頭目','局內等級',
-      '結算掉落圖示','結算卡片圖示','紀錄裝備','紀錄卡片','已辨識金裝','總紀錄','警告'];
+      '結算掉落圖示','結算卡片圖示','紀錄裝備','紀錄卡片','已辨識金裝','精簡提示筆數','總紀錄','警告'];
     const f=v=>{let s=String(v??'');if(/^\s*[=+@\-]/.test(s))s="'"+s;return '"'+s.replace(/"/g,'""')+'"';};
     const rows=runHistory.map(r=>[r.id,r.startedAt,r.settledAt,r.difficulty?.stage,
       r.difficulty?.enemyCount,r.difficulty?.enemyDamage,r.difficulty?.enemyHp,r.difficulty?.enemySpeed,
@@ -316,7 +391,7 @@
       r.difficulty?.equipmentMultiplier,r.difficulty?.legendaryPct,
       r.summaryObserved?.stats?.duration,r.summaryObserved?.stats?.kills,r.summaryObserved?.stats?.bosses,
       r.summaryObserved?.stats?.level,r.summaryObserved?.dropIcons,r.summaryObserved?.cardIcons,
-      r.equipmentRecorded,r.cardsRecorded,r.goldRecorded,r.recorded,r.captureWarning]);
+      r.equipmentRecorded,r.cardsRecorded,r.goldRecorded,r.compactRecorded,r.recorded,r.captureWarning]);
     const body='\ufeff'+[headers,...rows].map(row=>row.map(f).join(',')).join('\r\n');
     const a=document.createElement('a'),u=URL.createObjectURL(new Blob([body],{type:'text/csv;charset=utf-8'}));
     a.href=u;a.download='HANS_關卡強度與戰利品_場次統計_'+new Date().toISOString().slice(0,10)+'.csv';
@@ -353,7 +428,7 @@
         if(summarySeen.has(uniq))continue;
         summarySeen.add(uniq);
         // 只比對「本場」的同名卡片，不會拿其他場的卡片來去重。
-        const popupCount=runRecords().filter(x=>typeName(x)==='卡片'&&x.name===name&&x.origin==='掉落彈窗').length;
+        const popupCount=runRecords().filter(x=>typeName(x)==='卡片'&&x.name===name&&/掉落彈窗|精簡掉落提示/.test(x.origin||'')).length;
         const seenInSummary=[...summarySeen].filter(v=>v.includes(`:${src}:${name}`)).length;
         if(seenInSummary>popupCount)addRecord({type:'卡片',name,rarity:'',tier:null,baseStats:[],attributes:[],
           imageHint:srcName,rawText:`結算畫面：獲得的卡片 #${i+1}；${name}`,origin:'結算卡片縮圖（名稱可能未辨識）'});
@@ -394,6 +469,7 @@
           `開局／開始記錄：${startTime}`,
           `關卡：${run.difficulty?.stage||'未確認'}｜敵量 ${run.difficulty?.enemyCount??'?'}%｜HP ${run.difficulty?.enemyHp??'?'}%｜掉寶 ×${run.difficulty?.dropMultiplier??'?'}｜裝備 ×${run.difficulty?.equipmentMultiplier??'?'}｜傳說率 ${run.difficulty?.legendaryPct??'?'}%`,
           `結算縮圖：掉落 ${run.summaryObserved?.dropIcons??'?'}｜卡片 ${run.summaryObserved?.cardIcons??'?'}（非完整名稱／品質清單）`,
+           `精簡掉落提示：${items.filter(r=>/精簡掉落提示/.test(r.origin||'')).length} 筆`,
           run.captureWarning?`⚠️ ${run.captureWarning}`:'',part,
           '※ 此表統計本場由畫面成功辨識的掉落；若道具未顯示文字或腳本未運作，無法補回。'
         ].join('\n\n').slice(0,3900),
@@ -585,9 +661,9 @@
     ui.style.cssText='position:fixed;right:7px;bottom:8px;z-index:2147483647;max-width:calc(100vw - 14px);'+
       'font:12px/1.45 system-ui,sans-serif;color:#fff;background:#203452f0;border:1px solid #98b5db;'+
       'border-radius:8px;padding:6px;box-shadow:0 3px 12px #0007';
-    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.7.3 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
+    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.7.4 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
       <div id="roj4-menu" hidden style="width:265px;max-width:80vw;max-height:60vh;overflow-y:auto;padding-top:6px">
-        <div style="font-size:10px;opacity:.78">HANS 整合 v0.7.3 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
+        <div style="font-size:10px;opacity:.78">HANS 整合 v0.7.4 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
         <div id="roj4-discord">Discord：開｜待送 0</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
           <button id="roj4-toggle">暫停紀錄</button><button id="roj4-notify">關閉 DC</button>
@@ -636,6 +712,7 @@
   function init(){
     if(!document.documentElement){setTimeout(init,40);return;}
     new MutationObserver(changes=>{
+      captureCompactMutations(changes); // 在排入微任務之前即時捕捉短暫提示
       if(!ui&&document.body)makeUI();
       if(changes.every(ch=>{const el=ch.target instanceof Element?ch.target:ch.target?.parentElement;return !!el?.closest?.(`#${UI_ID},#hh-payon-integrated-v06`);}))return;
       queueScan();

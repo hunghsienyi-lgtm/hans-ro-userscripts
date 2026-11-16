@@ -10,7 +10,7 @@
 | 斐揚森林：首次 1:00、之後每分鐘採集 | 1.9.2 | [HANS_Forest_Magnet_Loot.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Forest_Magnet_Loot.user.js) |
 | **長場巡走／1:55、2:55、5:55、之後每2分鐘前5秒找磁鐵／中途加入當前局／返點失敗安全停靠／Boss最後15秒只找磁鐵／Lv130 免翻牌**（覆蓋原文字重進腳本） | **2.3.0** | [HANS_Payon_Auto_Reenter.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Payon_Auto_Reenter.user.js) |
 | **三分鐘刷卡專用巡走**：Lv30返點站打30秒、0:55首顆、2:45起最後15秒只找磁鐵、Lv31免翻牌、3:00 磁鐵 | **1.0.5** | [HANS_ThreeMinute_Magnet_Patrol.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_ThreeMinute_Magnet_Patrol.user.js) |
-| **選關＋戰利品整合版（右下角）**：遠征一／二／三周目選關＋每場統一匯報＋死亡返回＋入場滾輪、3 分鐘磁鐵協調、選關、Discord、場次 CSV | **0.8.0** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
+| **選關＋戰利品整合版（右下角）**：遠征三周目後綴辨識／獨立選關＋每場統一匯報＋死亡返回＋入場滾輪、3 分鐘磁鐵協調、選關、Discord、場次 CSV | **0.8.1** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
 
 **2026-11-16 起，選關與戰利品已整合為同一支腳本。** 請在 Tampermonkey 將戰利品更新到 v0.7.4；原『文字重進』已更新改為 v2.1.0 的獨立巡走／磁鐵腳本，不再負責重進，自動重進改由右下角戰利品面板內的「重進」開關與關卡選單控制（不再顯示右上角固定視窗）。其餘巫師選技及森林採集維持獨立。安裝前先停用重複用途舊版腳本。後續更新時保留檔名與網址，增加腳本 `@version`，上傳覆寫到 `main`，Tampermonkey 依設定定期檢查 `@updateURL` 並取得 `@downloadURL`。更新頻率依瀏覽器與 Tampermonkey 設定而異；如需即時更新，可在 Tampermonkey 手動檢查更新。
 
@@ -169,3 +169,11 @@ HANS 點選「之後不再翻牌」後會出現「已關閉翻牌（這張選完
 - 初次使用二／三周目：先打開遠征頁，讓腳本切到相應周目並掃描列表，再在右下角選擇要重進的地圖；**未明確選地圖前不會出征**。如果自己在遠征畫面手動切換周目，背景掃描也會依當下周目記錄，不會覆蓋其他周目的資料。
 - 難度與每場戰利品報表新增「周目／地圖」標記；原有難度滑桿、戰利品即時辨識、金裝僅場末總表、死亡返回、三分鐘短場和每次進場向下滾輪10次保留。
 - 已完成 JavaScript 語法、介面掛載、三周目同名關卡分離、周目按鈕 class／aria／背景色辨識與出征前切換的模擬測試。尚需 HANS 真實畫面實際操作驗證。
+
+## v0.8.1 HANS 遠征關卡後綴：以此類推所有地圖
+
+- 玩家實際畫面確認：**一周目＝原關卡名稱**，**二周目＝原關卡名稱＋`・改`**，**三周目＝原關卡名稱＋`・改²`**。例如「普隆德拉原野／普隆德拉原野・改／普隆德拉原野・改²」、「斐揚森林／斐揚森林・改／斐揚森林・改²」。
+- 程式以**任意關卡原名稱＋對應周目後綴**辨識，不硬編碼所有地圖，因此普隆德拉地下水道、失事輪、柏伊亞島、斐揚洞穴及後續新增關卡亦依同一規則解析；但關卡是否解鎖、等級及是否確實存在仍必須從 HANS 畫面實際掃描，不能自行生成未證實的關卡。
+- 三周目顯示名稱保留原始上標 `²`；內部比較時 `改²`、Unicode 正規化後的 `改2` 視為同一名稱。不同周目建立不同 key，不能用二周目「・改」去選三周目「・改²」，出征前再次比對周目與地圖後綴。
+- 若舊快取曾誤把無後綴地圖歸為二／三周目，新版不會繼續套用該錯誤資料，須再次掃描正確周目並重新選取關卡。
+- 保留原本自動重進、難度、縮放、死亡返回、短場重進、精簡掉落與每場 Discord 總表。已通過純 JS 語法、後綴分類與 UI 各周目選項隔離模擬；HANS 網頁實戰仍待確認。

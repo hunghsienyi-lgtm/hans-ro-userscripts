@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HANS RO｜三分鐘刷卡巡走｜先走30秒返點停30秒＋Lv30停走
 // @namespace    hunghung-ro-local-tools
-// @version      1.0.1
+// @version      1.0.2
 // @description  HANS短場：開場巡走30秒後回原點定點打30秒、再找磁鐵；Lv30立刻停止亂走並返點，Lv30最後一張技能照選、Lv31起不再翻牌；3:00磁鐵保留。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-idle
@@ -155,7 +155,7 @@
     move(PATROL[run.patrolStep]);
   }
   function returnHome(reason,t){
-    if(reason==='second'){run.secondDone=true;sync('done');}
+    if(reason==='second'){run.secondDone=true;sync('returning-second');}
     run.mode='return';run.part=reason;run.returnAt=t;run.returnBest=Infinity;
     run.returnProgressAt=t;run.returnDetours=0;run.returnDetourUntil=0;
     run.target=null;run.observed=null;move();
@@ -165,7 +165,8 @@
     if((run.part==='initial'||run.part==='level30')&&run.holdUntilSeconds===null)
       run.holdUntilSeconds=run.seconds+OPT.homePauseSeconds;
     run.mode='park';run.target=null;run.patrolUntil=0;move();
-    info(run.secondDone?'第二次磁鐵已處理，等待捨棄重進':
+    if(run.secondDone)sync('done'); // 必須真正返回原點才放行右下角捨棄流程
+    info(run.secondDone?'第二次磁鐵已處理且已返點，等待捨棄重進':
       run.holdUntilSeconds!==null&&run.seconds<run.holdUntilSeconds?'已回原點，站打30秒':
       '原地刷怪，等定時磁鐵');
   }

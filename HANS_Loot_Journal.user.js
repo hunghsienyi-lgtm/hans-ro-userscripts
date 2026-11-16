@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.8.1
-// @description  HANS 一／二／三周目依原名／・改／・改²辨識全部地圖，逐周掃描避免錯關；保留自動重進、滾輪、短場與戰利品。
+// @version      0.8.2
+// @description  免掃描全清單即可選一／二／三周目：依已知地圖建立候選，遠征實際關卡名稱驗證後才出征，保留原重進／戰利品功能。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.8.1';
+  const VERSION = '0.8.2';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -673,9 +673,9 @@
     ui.style.cssText='position:fixed;right:7px;bottom:8px;z-index:2147483647;max-width:calc(100vw - 14px);'+
       'font:12px/1.45 system-ui,sans-serif;color:#fff;background:#203452f0;border:1px solid #98b5db;'+
       'border-radius:8px;padding:6px;box-shadow:0 3px 12px #0007';
-    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.8.1 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
+    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.8.2 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
       <div id="roj4-menu" hidden style="width:265px;max-width:80vw;max-height:60vh;overflow-y:auto;padding-top:6px">
-        <div style="font-size:10px;opacity:.78">HANS 整合 v0.8.1 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
+        <div style="font-size:10px;opacity:.78">HANS 整合 v0.8.2 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
         <div id="roj4-discord">Discord：開｜待送 0</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
           <button id="roj4-toggle">暫停紀錄</button><button id="roj4-notify">關閉 DC</button>
@@ -803,11 +803,11 @@
     entries.sort((a,b)=>lvl(a[1])-lvl(b[1])||a[1].name.localeCompare(b[1].name));
     picker.replaceChildren();
     const blank=document.createElement('option');blank.value='';
-    blank.textContent=entries.length?'請選擇'+WORLD_NAMES[world]+'關卡':'請先掃描'+WORLD_NAMES[world];
+    blank.textContent=entries.length?'選擇'+WORLD_NAMES[world]+'關卡':'目前無可選關卡';
     picker.append(blank);
     for(const [key,st] of entries){
       const opt=document.createElement('option');opt.value=key;opt.disabled=st.unlocked===false;
-      opt.textContent=st.name+(st.level?' · Lv '+st.level:'')+(st.unlocked===false?'（未解鎖）':'');
+      opt.textContent=st.name+(st.level?' · Lv '+st.level:'')+(st.unlocked===false?'（未解鎖）':st.unlocked===null?'（待確認）':'');
       picker.append(opt);
     }
     const preferred=(STAGES[before]?.world===world?before:'')||worldSelections[String(world)]||'';
@@ -820,8 +820,23 @@
     const found=Object.entries(STAGES).find(([,v])=>v.world===world&&norm(v.name)===norm(name));
     const key=found?.[0]||'hans:w'+world+':'+norm(name);
     if(!STAGES[key])STAGES[key]={name,re:namePattern(name),unlocked,level,world};
-    else{STAGES[key].unlocked=unlocked;if(level)STAGES[key].level=level;}
+    else{STAGES[key].unlocked=unlocked;STAGES[key].verified=true;if(level)STAGES[key].level=level;}
+    STAGES[key].verified=true;
     redrawStageChoices();return key;
+  }
+  // 用已知地圖的原名推導二／三周目選關候選，無須先人工捲完清單。
+  // 候選本身不代表已解鎖；真正出征前仍須在該周目看到相同名稱、Lv 與可挑戰。
+  function seedKnownStageCandidates(){
+    const bases=new Set(Object.values(STAGES).map(x=>baseStageName(x.name)));
+    for(const base of bases){
+      if(!base||base.length<2||base.length>40)continue;
+      for(const world of [1,2,3]){
+        const name=stageLabelForWorld(base,world),key='hans:w'+world+':'+norm(name);
+        if(Object.values(STAGES).some(x=>x.world===world&&norm(x.name)===norm(name)))continue;
+        STAGES[key]={name,re:namePattern(name),unlocked:null,level:'',world,verified:false};
+      }
+    }
+    redrawStageChoices();
   }
   const levelPattern=/\bLv\.?\s*(\d+)\s*[-–—~～]\s*(\d+)\b/i;
   // 對照實際畫面：左側每張關卡卡片有 Lv 31-40 等範圍及關卡名稱。
@@ -856,10 +871,10 @@
     return out;
   }
   const catalog={running:false,complete:false,scroll:null,steps:0,observed:new Set(),
-    searchName:'',searchSteps:0,topReadyAt:0,topConfirmed:false,world:null,worldAt:0};
+    searchName:'',searchSteps:0,searchAt:0,topReadyAt:0,topConfirmed:false,world:null,worldAt:0};
   function resetCatalog(){
     Object.assign(catalog,{running:false,complete:false,scroll:null,steps:0,observed:new Set(),
-      searchName:'',searchSteps:0,topReadyAt:0,topConfirmed:false});
+      searchName:'',searchSteps:0,searchAt:0,topReadyAt:0,topConfirmed:false});
   }
   function findListScroll(rows){
     for(let p=rows[0]?.el,i=0;p&&i<14;p=p.parentElement,i++){
@@ -915,16 +930,16 @@
   }
   function stageExplorerTick(){
     if(!expeditionOpen()){resetCatalog();catalog.world=null;return;}
-    if(worldClickAt&&Date.now()-worldClickAt<800)return; // 等周目切換動畫結束
+    if(worldClickAt&&Date.now()-worldClickAt<700)return; // 等周目切換動畫與列表更新
     const tab=currentWorldState();
-    if(tab.available&&tab.world===null){tell('目前周目狀態不明，暫停掃描');return;}
-    const world=tab.world;
-    if(catalog.world!==world){
-      resetCatalog();catalog.world=world;catalog.worldAt=Date.now();
-      tell('開始掃描'+WORLD_NAMES[world]+'的關卡');return;
+    if(tab.world===null){
+      tell('關卡周目尚未辨識，等待畫面載入（不需手動掃描）');return;
     }
-    if(Date.now()-catalog.worldAt<550)return;
-    scanAllStages(world);
+    if(catalog.world!==tab.world){
+      resetCatalog();catalog.world=tab.world;catalog.worldAt=Date.now();
+    }
+    // 只記錄目前遊戲已顯示的關卡。後續若選到較後方的地圖，才定向捲動尋找。
+    readStageCatalog(tab.world);
   }
 
   const rct = el => el.getBoundingClientRect();
@@ -968,7 +983,7 @@
     rememberStage(oldTarget.slice(5),true,'',1);
     worldSelections['1']='hans:w1:'+norm(oldTarget.slice(5));
   }
-  redrawStageChoices();
+  seedKnownStageCandidates();
 
   // 控制元件必須等 shortGroup / shortHelp 都宣告後才掛載；原 v0.7.0 會因 TDZ 初始化失敗。
   // 選關與戰利品共用右下原本面板。若主面板尚未生成，重試掛載，不開第二個浮窗。
@@ -1334,7 +1349,7 @@
   worldPicker.addEventListener('change',()=>{
     try{localStorage.setItem(WORLD_KEY,worldPicker.value)}catch{}
     redrawStageChoices();resetCatalog();catalog.world=null;phase('');
-    tell('設定 '+WORLD_NAMES[chosenWorld()]+'，請開遠征畫面掃描並選關');
+    tell('已切換'+WORLD_NAMES[chosenWorld()]+'，直接選關；未驗證地圖會在出征前確認');
   });
   picker.addEventListener('change',()=>{
     const stage=targetStage();if(!stage||stage.unlocked===false)return;
@@ -1433,8 +1448,20 @@
     colors.sort((a,b)=>a.b-b.b);
     return colors[1].b-colors[0].b>35?colors[0].id:null;
   }
+  function visibleWorldFromStages(){
+    const rows=stageRows();
+    if(rows.length<2)return null;
+    const worlds=rows.map(x=>stageNameWorld(x.name));
+    // 關卡名稱的後綴比按鈕背景色更可靠；至少兩張同周目才能確認。
+    return worlds.every(x=>x===worlds[0])?worlds[0]:null;
+  }
   function currentWorldState(){
-    const tabs=worldTabs();return {tabs,available:!!tabs,world:tabs?selectedWorldFromTabs(tabs):1};
+    const tabs=worldTabs(),byStages=visibleWorldFromStages();
+    const byTabs=tabs?selectedWorldFromTabs(tabs):null;
+    // DOM 可能只在切換後短暫留有上一周目的卡片，切換後有 700ms 緩衝。
+    const world=byStages!==null?byStages:byTabs;
+    return {tabs,available:!!tabs,world:world??(tabs?null:1),
+      source:byStages!==null?'stage-name':byTabs!==null?'tab':'unknown'};
   }
   let worldClickAt=0;
   function ensureWorldTab(){
@@ -1477,20 +1504,21 @@
     const target=targetStage()?.name||'';
     const key=chosenWorld()+'|'+target;
     if(catalog.searchName!==key){
-      catalog.searchName=key;catalog.searchSteps=0;
+      catalog.searchName=key;catalog.searchSteps=0;catalog.searchAt=0;
       if(catalog.scroll)catalog.scroll.scrollTop=0;
     }
     const rows=readStageCatalog(chosenWorld());
     const row=rows.find(x=>stageFitsWorld(x.name,chosenWorld())&&norm(x.name)===norm(target));
     if(row)return row;
     const el=catalog.scroll;
+    if(el&&Date.now()-catalog.searchAt<450)return null; // 等列表更新才往下捲下一段
     if(!el||catalog.searchSteps>65||el.scrollTop>=el.scrollHeight-el.clientHeight-3){
       tell('找不到遠征關卡：'+target+'，為避免誤點已停止選擇');return null;
     }
     el.scrollTop=Math.min(el.scrollHeight-el.clientHeight,
       el.scrollTop+Math.max(110,el.clientHeight*.72));
-    catalog.searchSteps++;
-    tell('正在向下尋找 '+target+' ('+catalog.searchSteps+')');
+    catalog.searchSteps++;catalog.searchAt=Date.now();
+    tell('正在尋找 '+target+'（只搜尋指定關卡，不掃描全部）');
     return null;
   }
 
@@ -1506,12 +1534,14 @@
     phase('expedition');
     if(!ensureWorldTab())return;
     if(catalog.world!==chosenWorld()){stageExplorerTick();return;}
-    if(!catalog.complete){tell('正在向下讀取完整關卡列表：'+catalog.observed.size+' 個');return;}
+    // 不再要求捲完所有周目關卡。選到尚未顯示的地圖才由 seekStage 定向搜尋。
     const stage=targetStage();
     if(!stage){tell('請先選擇'+WORLD_NAMES[chosenWorld()]+'的關卡，暫不出征');return;}
     if(stage.unlocked===false){tell('尚未解鎖：'+stage.name);return;}
     const row=stageTarget()||seekStage();
     if(!row)return;
+    // 候選關卡只有命名規則，沒有保證解鎖；使用現場資料覆核名稱、解鎖狀態。
+    rememberStage(row.name,row.unlocked,row.level,chosenWorld());
     if(!row.unlocked){tell('關卡未解鎖，停止選擇：'+stage.name);return;}
     if(!stageFitsWorld(row.name,chosenWorld())||!stageFitsWorld(stage.name,chosenWorld())){
       tell('周目與關卡名稱不符，暫不出征：'+WORLD_NAMES[chosenWorld()]+'／'+stage.name);return;

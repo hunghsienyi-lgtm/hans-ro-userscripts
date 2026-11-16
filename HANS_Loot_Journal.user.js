@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 戰利品全紀錄｜金色通知＋每場總表
 // @namespace    ro-local-loot-journal
-// @version      0.7.0
-// @description  HANS 選關＋戰利品：新增可選的3分鐘刷樹精卡（ESC→主選單→捨棄→自動重進），小王緩衝可選0–60秒。
+// @version      0.7.1
+// @description  修復右下角選關、重進及3分鐘刷卡控制區未顯示的初始化錯誤；保留難度掃描、戰利品及捨棄重進。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.7.0';
+  const VERSION = '0.7.1';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -585,9 +585,9 @@
     ui.style.cssText='position:fixed;right:7px;bottom:8px;z-index:2147483647;max-width:calc(100vw - 14px);'+
       'font:12px/1.45 system-ui,sans-serif;color:#fff;background:#203452f0;border:1px solid #98b5db;'+
       'border-radius:8px;padding:6px;box-shadow:0 3px 12px #0007';
-    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.7.0 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
+    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.7.1 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
       <div id="roj4-menu" hidden style="width:265px;max-width:80vw;max-height:60vh;overflow-y:auto;padding-top:6px">
-        <div style="font-size:10px;opacity:.78">HANS 整合 v0.7.0 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
+        <div style="font-size:10px;opacity:.78">HANS 整合 v0.7.1 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
         <div id="roj4-discord">Discord：開｜待送 0</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
           <button id="roj4-toggle">暫停紀錄</button><button id="roj4-notify">關閉 DC</button>
@@ -652,6 +652,7 @@
   console.info('[HANS 戰利品] 腳本 v' + VERSION + ' 已載入：' + location.href);
   init();
   // 原本自動重進功能已整合在此：同一腳本、同一封存流程。
+  try {
   (() => {
   'use strict';
   if (document.getElementById('hh-payon-integrated-v06')) return;
@@ -841,7 +842,7 @@
   if(!STAGES[savedTarget]&&savedTarget.startsWith('hans:'))rememberStage(savedTarget.slice(5),true);
   picker.value=STAGES[savedTarget]?savedTarget:'cave';
 
-  hud.append(btn,picker,shortGroup,shortHelp,msg);
+  // 控制元件必須等 shortGroup / shortHelp 都宣告後才掛載；原 v0.7.0 會因 TDZ 初始化失敗。
   // 選關與戰利品共用右下原本面板。若主面板尚未生成，重試掛載，不開第二個浮窗。
   function mountStageIntoLootPanel(){
     if(!document.body){setTimeout(mountStageIntoLootPanel,200);return;}
@@ -850,7 +851,7 @@
     if(!menu){setTimeout(mountStageIntoLootPanel,200);return;}
     if(hud.parentElement!==menu)menu.prepend(hud);
   }
-  mountStageIntoLootPanel();
+  // 實際掛載移至 shortGroup、shortHelp 建立完成後。
   let active = false, timer = null, state = '', lastAt=0, attempts={};
   let stageClickedAt=0, beforeStageWasStory=false, departAt=0, wildernessAt=0;
   const targetStage=()=>STAGES[picker.value]||STAGES.cave;
@@ -917,6 +918,18 @@
     tell('三分鐘刷卡調整為 3:00 +'+shortPrefs.grace+'秒');
   });
   updateShortControls();
+  // 所有元件完成初始化後才顯示：選關、重進與 3 分鐘模式必須同時在右下角出現。
+  btn.id='hans-auto-reentry-toggle';
+  picker.id='hans-auto-stage-picker';
+  shortToggle.id='hans-short-run-toggle';
+  shortGrace.id='hans-short-run-grace';
+  hud.append(btn,picker,shortGroup,shortHelp,msg);
+  mountStageIntoLootPanel();
+  const uiElements=[btn,picker,shortToggle,shortGrace];
+  if(uiElements.some(el=>!hud.contains(el)) || hud.parentElement?.id!=='roj4-menu'){
+    throw new Error('右下角選關／3分鐘刷卡元件未能正常掛載');
+  }
+  console.info('[HANS 選關＋戰利品] 已掛載右下角選關、重進、3分鐘刷卡四項控制');
   // 從上方中央的遊戲計時 HUD 取值，不能把主城的 00:xx、選卡或現實時間當戰鬥時間。
   function readCombatSeconds(){
     const mini=document.querySelector('#minimap'),coords=document.querySelector('#minimap-coords');
@@ -1332,5 +1345,11 @@
   try{restoreReentry=sessionStorage.getItem(REENTRY_KEY)==='1';}catch{}
   enable(restoreReentry,{remember:false});
 })();
+  } catch(error) {
+    // 以前此處發生執行期錯誤時，右下角只剩戰利品按鈕，沒有任何錯誤提示。
+    const state=document.getElementById('roj4-state');
+    if(state) state.textContent='選關控制初始化失敗：'+String(error?.message||error);
+    console.error('[HANS 選關＋戰利品] 控制面板初始化失敗',error);
+  }
 
 })();

@@ -10,7 +10,7 @@
 | 斐揚森林：首次 1:00、之後每分鐘採集 | 1.9.2 | [HANS_Forest_Magnet_Loot.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Forest_Magnet_Loot.user.js) |
 | **長場巡走／1:55、2:55、5:55、之後每2分鐘前5秒找磁鐵／中途加入當前局／返點失敗安全停靠／Boss最後15秒只找磁鐵／Lv130 免翻牌**（覆蓋原文字重進腳本） | **2.3.0** | [HANS_Payon_Auto_Reenter.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Payon_Auto_Reenter.user.js) |
 | **三分鐘刷卡專用巡走**：Lv30返點站打30秒、0:55首顆、2:45起最後15秒只找磁鐵、Lv31免翻牌、3:00 磁鐵 | **1.0.5** | [HANS_ThreeMinute_Magnet_Patrol.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_ThreeMinute_Magnet_Patrol.user.js) |
-| **選關＋戰利品整合版（右下角）**：遠征三周目後綴辨識／獨立選關＋每場統一匯報＋死亡返回＋入場滾輪、3 分鐘磁鐵協調、選關、Discord、場次 CSV | **0.8.1** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
+| **選關＋戰利品整合版（右下角）**：遠征免整份掃描／三周目獨立選關＋每場統一匯報＋死亡返回＋入場滾輪、3 分鐘磁鐵協調、選關、Discord、場次 CSV | **0.8.2** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
 
 **2026-11-16 起，選關與戰利品已整合為同一支腳本。** 請在 Tampermonkey 將戰利品更新到 v0.7.4；原『文字重進』已更新改為 v2.1.0 的獨立巡走／磁鐵腳本，不再負責重進，自動重進改由右下角戰利品面板內的「重進」開關與關卡選單控制（不再顯示右上角固定視窗）。其餘巫師選技及森林採集維持獨立。安裝前先停用重複用途舊版腳本。後續更新時保留檔名與網址，增加腳本 `@version`，上傳覆寫到 `main`，Tampermonkey 依設定定期檢查 `@updateURL` 並取得 `@downloadURL`。更新頻率依瀏覽器與 Tampermonkey 設定而異；如需即時更新，可在 Tampermonkey 手動檢查更新。
 
@@ -177,3 +177,11 @@ HANS 點選「之後不再翻牌」後會出現「已關閉翻牌（這張選完
 - 三周目顯示名稱保留原始上標 `²`；內部比較時 `改²`、Unicode 正規化後的 `改2` 視為同一名稱。不同周目建立不同 key，不能用二周目「・改」去選三周目「・改²」，出征前再次比對周目與地圖後綴。
 - 若舊快取曾誤把無後綴地圖歸為二／三周目，新版不會繼續套用該錯誤資料，須再次掃描正確周目並重新選取關卡。
 - 保留原本自動重進、難度、縮放、死亡返回、短場重進、精簡掉落與每場 Discord 總表。已通過純 JS 語法、後綴分類與 UI 各周目選項隔離模擬；HANS 網頁實戰仍待確認。
+
+## v0.8.2：選關不必先掃描整份遠征清單
+
+- 之前 v0.8.1 無論地圖是否已經顯示，必須先把完整列表捲到底、`catalog.complete` 才能出征，且若周目按鈕背景樣式無法確認就停止。現在**已移除必須完整掃描才可出征的限制**。
+- 已知的地圖（包含舊版清單與已提供的關卡）可自動推導一／二／三周目名稱，右下角直接列出候選選項；尚未在遊戲畫面確認的候選標為「待確認」，不假設已解鎖。
+- 遠征畫面只即時讀取當前可見關卡；周目狀態除按鈕 class/aria/顏色外，還用至少兩張同一周目後綴卡片（原名／`・改`／`・改²`）判斷。因此截圖中「三周目 + 普隆德拉原野・改²」不再要求人工掃描清單。
+- 選擇較後方地圖而畫面尚未顯示時，腳本會**只針對該地圖自動捲動尋找**；在取得 HANS 實際關卡卡片且確認解鎖、周目、右側預覽符合後才出征；無法確認就不出征。
+- 保留原先難度、重進、3分鐘刷卡、死亡返回、縮放及場末戰利品 Discord。已完成語法、周目名稱推論、候選／解鎖辨識及跨周目隔離模擬測試；實際 HANS 點擊仍須測試。

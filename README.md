@@ -10,7 +10,7 @@
 | 斐揚森林：首次 1:00、之後每分鐘採集 | 1.9.2 | [HANS_Forest_Magnet_Loot.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Forest_Magnet_Loot.user.js) |
 | **長場巡走／1:55、2:55、5:55、之後每2分鐘前5秒找磁鐵／中途加入當前局／返點失敗安全停靠／Boss最後15秒只找磁鐵／Lv130 免翻牌**（覆蓋原文字重進腳本） | **2.3.0** | [HANS_Payon_Auto_Reenter.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Payon_Auto_Reenter.user.js) |
 | **三分鐘刷卡專用巡走**：Lv30返點站打30秒、0:55首顆、2:45起最後15秒只找磁鐵、Lv31免翻牌、3:00 磁鐵 | **1.0.5** | [HANS_ThreeMinute_Magnet_Patrol.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_ThreeMinute_Magnet_Patrol.user.js) |
-| **選關＋戰利品整合版（右下角）**：金色不逐件通知、每場統一匯報＋死亡結算返回＋下滾10次、3 分鐘磁鐵協調、選關、Discord、場次 CSV | **0.7.8** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
+| **選關＋戰利品整合版（右下角）**：遠征一／二／三周目選關＋每場統一匯報＋死亡返回＋入場滾輪、3 分鐘磁鐵協調、選關、Discord、場次 CSV | **0.8.0** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
 
 **2026-11-16 起，選關與戰利品已整合為同一支腳本。** 請在 Tampermonkey 將戰利品更新到 v0.7.4；原『文字重進』已更新改為 v2.1.0 的獨立巡走／磁鐵腳本，不再負責重進，自動重進改由右下角戰利品面板內的「重進」開關與關卡選單控制（不再顯示右上角固定視窗）。其餘巫師選技及森林採集維持獨立。安裝前先停用重複用途舊版腳本。後續更新時保留檔名與網址，增加腳本 `@version`，上傳覆寫到 `main`，Tampermonkey 依設定定期檢查 `@updateURL` 並取得 `@downloadURL`。更新頻率依瀏覽器與 Tampermonkey 設定而異；如需即時更新，可在 Tampermonkey 手動檢查更新。
 
@@ -160,3 +160,12 @@ HANS 點選「之後不再翻牌」後會出現「已關閉翻牌（這張選完
 - 3:00 時若已沒有可追的磁鐵，就透過既有 `hans_ro_three_min_magnet_sync_v1` 回報 `done`，讓右下角三分鐘捨棄模式按其原本設定執行（例如預設3:20）。若正在追磁鐵，可延續搜尋，但最多35秒；達到時間上限就放行捨棄，不保證每次都找到磁鐵。
 - 後續翻牌規則維持：Lv30最後技能正常選、Lv31按「之後不再翻牌」，眼前那張仍需由巫師選技完成。長場 Shift+6 v2.3.0 不受此修改影響。
 - 已做腳本語法與模擬測試：2:45無磁鐵等待、2:55追磁鐵、3:00無磁鐵放行、拾取後不返點及不隨機巡走。HANS實際移動與磁鐵拾取仍需遊戲測試。
+
+## v0.8.0：遠征一周目／二周目／三周目選關
+
+- **右下角選關＋戰利品面板**新增周目下拉選單「一周目／二周目／三周目」；其後的關卡選單只顯示所選周目已讀取過的關卡。
+- 遊戲遠征頁新增的三個周目按鈕會由腳本辨識：自動重進時先切換到指定周目並**確認選中後才選地圖、按出征**；若選中狀態無法確認，停下避免進錯周目／同名副本。
+- **不同周目各自保存關卡**，即使都叫「迷宮森林」，一周目與二周目也不會混成同一選項。已讀取的一周目清單和舊選擇會盡可能移轉；二、三周目的名稱、解鎖狀態和Lv範圍只根據 HANS 遠征實際畫面掃描，不猜測。
+- 初次使用二／三周目：先打開遠征頁，讓腳本切到相應周目並掃描列表，再在右下角選擇要重進的地圖；**未明確選地圖前不會出征**。如果自己在遠征畫面手動切換周目，背景掃描也會依當下周目記錄，不會覆蓋其他周目的資料。
+- 難度與每場戰利品報表新增「周目／地圖」標記；原有難度滑桿、戰利品即時辨識、金裝僅場末總表、死亡返回、三分鐘短場和每次進場向下滾輪10次保留。
+- 已完成 JavaScript 語法、介面掛載、三周目同名關卡分離、周目按鈕 class／aria／背景色辨識與出征前切換的模擬測試。尚需 HANS 真實畫面實際操作驗證。

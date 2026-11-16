@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         HANS RO｜三分鐘刷卡專用巡走｜0:30／3:00磁鐵＋Lv30免翻牌
+// @name         HANS RO｜三分鐘刷卡巡走｜先走30秒返點停30秒＋Lv30停走
 // @namespace    hunghung-ro-local-tools
-// @version      1.0.0
-// @description  HANS專用：開局巡走吸經驗、0:30撿磁鐵返點、Lv30後不再翻牌、3:00再撿磁鐵；與右下三分鐘捨棄重進同步。
+// @version      1.0.1
+// @description  HANS短場：開場巡走30秒後回原點定點打30秒、再找磁鐵；Lv30立刻停止亂走並返點，Lv30最後一張技能照選、Lv31起不再翻牌；3:00磁鐵保留。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        none
@@ -17,7 +17,7 @@
   const KEY_ENABLED='hans_ro_three_min_patrol_enabled_v1';
   const KEY_SYNC='hans_ro_three_min_magnet_sync_v1';
   const KEY_SHORT='hans-ro-stage-loot-short3-v070';
-  const OPT={first:30,second:180,skipLevel:30,seekMaxMs:35000,confirmMs:550,
+  const OPT={patrolSeconds:30,first:60,second:180,skipLevel:31,homePauseSeconds:30,seekMaxMs:35000,confirmMs:550,
     reach:3.4,homeReach:2.8,radius:68,returnMaxMs:40000,stallMs:2900,detourMs:850,maxDetours:4,tickMs:140};
   const PATROL=['d','s','a','a','w','d','w','s'];
   const now=()=>performance.now();
@@ -35,14 +35,14 @@
   const button=document.createElement('button');
   button.id=UI_ID;button.type='button';button.setAttribute('aria-keyshortcuts','Shift+7');
   button.style.cssText='position:fixed;left:8px;bottom:158px;z-index:2147483647;background:#384455;color:white;border:1px solid #eaeaea;border-radius:6px;padding:5px 8px;font:12px system-ui;max-width:min(370px,90vw);cursor:pointer;text-align:left';
-  button.title='Shift+7 開關；0:30及3:00找磁鐵，Lv30點「之後不再翻牌」。需配合右下3分鐘刷卡。';
+  button.title='Shift+7 開關；先巡走30秒，回原點站打30秒，再找第一顆磁鐵；Lv30立刻停止亂走返點，Lv30最後一張照選，Lv31起停止翻牌；3:00再找磁鐵。';
   (document.body||document.documentElement).append(button);
   const info=s=>{const text='HANS 3分巡走｜'+s;if(button.textContent!==text)button.textContent=text;};
   let enabled=false,timer=null,canvas=null,restore=null,player=null,playerAt=0,magnets=[],arc=null,points=[];
   const held=new Set();
   const run={started:false,wasOutside:true,seconds:null,home:null,mode:'waiting',part:'',
     firstPicked:false,secondPicked:false,secondDone:false,firstStarted:false,secondStarted:false,
-    skipClicked:false,skipAttempts:0,patrolStep:0,patrolUntil:0,seekAt:0,returnAt:0,
+    level30Reached:false,holdUntilSeconds:null,skipClicked:false,skipAttempts:0,patrolStep:0,patrolUntil:0,seekAt:0,returnAt:0,
     target:null,observed:null,bestDistance:Infinity,progressAt:0,detours:0,detourUntil:0,
     detourKey:'',blocked:[],returnBest:Infinity,returnProgressAt:0,returnDetours:0,
     returnDetourUntil:0,returnDetourKey:''};
@@ -62,7 +62,7 @@
   function reset(){
     move();Object.assign(run,{started:false,seconds:null,home:null,mode:'waiting',part:'',
       firstPicked:false,secondPicked:false,secondDone:false,firstStarted:false,secondStarted:false,
-      skipClicked:false,skipAttempts:0,patrolStep:0,patrolUntil:0,seekAt:0,returnAt:0,
+      level30Reached:false,holdUntilSeconds:null,skipClicked:false,skipAttempts:0,patrolStep:0,patrolUntil:0,seekAt:0,returnAt:0,
       target:null,observed:null,bestDistance:Infinity,progressAt:0,detours:0,detourUntil:0,
       detourKey:'',blocked:[],returnBest:Infinity,returnProgressAt:0,returnDetours:0,
       returnDetourUntil:0,returnDetourKey:''});
@@ -143,7 +143,7 @@
   }
   function startRound(seconds){
     reset();run.started=true;run.wasOutside=false;run.home=[...player];run.seconds=seconds;
-    run.mode='patrol';sync('active');info('開場巡走，約0:30找磁鐵');
+    run.mode='patrol';sync('active');info('開場巡走30秒，再返點站打30秒');
   }
   function toward(a,b){
     const dx=b[0]-a[0],dy=b[1]-a[1],t=.35*Math.max(Math.abs(dx),Math.abs(dy));
@@ -161,15 +161,20 @@
     run.target=null;run.observed=null;move();
   }
   function park(){
+    // 按遊戲內計時停留，升級選卡暫停時不偷算站打時間。
+    if((run.part==='initial'||run.part==='level30')&&run.holdUntilSeconds===null)
+      run.holdUntilSeconds=run.seconds+OPT.homePauseSeconds;
     run.mode='park';run.target=null;run.patrolUntil=0;move();
-    info(run.secondDone?'第二次磁鐵已處理，等待捨棄重進':'原地刷怪，3:00再找磁鐵');
+    info(run.secondDone?'第二次磁鐵已處理，等待捨棄重進':
+      run.holdUntilSeconds!==null&&run.seconds<run.holdUntilSeconds?'已回原點，站打30秒':
+      '原地刷怪，等定時磁鐵');
   }
   function driveHome(t){
     if(!player||!run.home){move();return;}
     const gap=d(player,run.home);
     if(gap<=OPT.homeReach){park();return;}
     if(t-run.returnAt>OPT.returnMaxMs||run.returnDetours>OPT.maxDetours){
-      move();run.mode='park';info('返點失敗，暫停移動');return;
+      move();run.mode='failed';info('返點失敗，停止移動避免亂走');return;
     }
     if(t<run.returnDetourUntil){move(run.returnDetourKey);return;}
     if(run.returnDetourUntil){run.returnDetourUntil=0;run.returnBest=gap;run.returnProgressAt=t;}
@@ -188,7 +193,7 @@
     run.blocked=[];run.bestDistance=Infinity;run.progressAt=t;run.detours=0;run.detourUntil=0;run.patrolUntil=0;
     if(part==='first')run.firstStarted=true;
     else {run.secondStarted=true;sync('seeking-second');}
-    move();info(part==='first'?'0:30 開始找第一顆磁鐵':'3:00 開始找第二顆磁鐵');
+    move();info(part==='first'?'站打30秒完成，開始找第一顆磁鐵':'3:00 開始找第二顆磁鐵');
   }
   function chooseMagnet(t){
     if(!player||!run.home)return null;
@@ -213,7 +218,7 @@
       }
     }
     const target=chooseMagnet(t);
-    if(!target){run.target=null;run.observed=null;patrol(t,true);info('尋找磁鐵中（最多35秒）');return;}
+    if(!target){run.target=null;run.observed=null;move();info('原地等待小地圖出現磁鐵（最多35秒），不隨機亂走');return;}
     if(!run.target||!near(run.target,target,3)){
       run.target=[...target];run.bestDistance=d(player,target);run.progressAt=t;
       run.detours=0;run.detourUntil=0;
@@ -243,15 +248,29 @@
     const match=all.match(/Lv\.?\s*(\d{1,3})(?:[:：]|(?:傷害|HP|血量|級))/i);
     return match?{panel:p,level:Number(match[1])}:null;
   }
-  function stopCardFlips(){
-    if(!run.started||run.skipClicked||run.skipAttempts>=5)return;
-    const level=levelPanel();if(!level||level.level<OPT.skipLevel)return;
+  function stopCardFlips(t){
+    if(!run.started)return;
+    const level=levelPanel();
+    if(!level)return;
+    if(level.level>=30&&!run.level30Reached){
+      run.level30Reached=true;
+      // Lv30 當下立刻停止隨機巡走；若已出門追磁鐵，也先回原點。
+      if(run.mode==='patrol')returnHome('level30',t);
+      else if(run.mode==='seek'){
+        if(run.part==='second')run.secondDone=true;
+        if(run.part==='first')run.firstStarted=true;
+        returnHome(run.part==='second'?'second':'level30',t);
+      }
+      info('已達 Lv30：停止亂走，回原點；最後一張技能仍交給巫師選技');
+    }
+    // Lv30 本次升級卡仍要讓巫師選技完成；Lv31 的畫面才按停止翻牌。
+    if(level.level<OPT.skipLevel||run.skipClicked||run.skipAttempts>=5)return;
     const stop=[...document.querySelectorAll('button,[role="button"]')].find(el=>
       shown(el)&&/^(?:之後不再翻牌|之后不再翻牌)$/.test(norm(el.textContent)));
     if(!stop){info('Lv'+level.level+' 已到，但找不到免翻牌按鈕');return;}
     run.skipAttempts++;
     stop.click();run.skipClicked=true;
-    info('Lv'+level.level+'：已按之後不再翻牌');
+    info('Lv'+level.level+'：Lv30 最後技能已可選，後續停止翻牌');
   }
   function loop(){
     if(!enabled||document.hidden)return;
@@ -273,22 +292,31 @@
     }
     run.seconds=clock;
     if(!run.secondDone){sync(clock>=180?'seeking-second':'active');}
-    stopCardFlips();
+    stopCardFlips(t);
     if(busy()||document.activeElement?.matches?.('input,textarea,select,[contenteditable="true"]')){
       move();return;
     }
     if(run.mode==='seek'){seek(t);return;}
     if(run.mode==='return'){driveHome(t);return;}
+    if(run.mode==='failed'){move();return;}
     if(run.mode==='patrol'){
-      if(clock>=OPT.first){beginSeek('first',t);return;}
+      if(clock>=OPT.patrolSeconds||run.level30Reached){
+        returnHome('initial',t);driveHome(t);return;
+      }
       patrol(t);info('開場巡走拾經驗 '+clock+'／30 秒');return;
     }
     if(run.mode==='park'){
+      if(run.holdUntilSeconds!==null && clock<run.holdUntilSeconds){
+        move();info('原點站打30秒中｜剩餘 '+Math.ceil(run.holdUntilSeconds-clock)+' 秒');return;
+      }
+      if(!run.firstStarted && clock>=OPT.first && clock<OPT.second){
+        beginSeek('first',t);return;
+      }
       if(clock>=OPT.second&&!run.secondDone&&!run.secondStarted){
         if(clock<=OPT.second+22){beginSeek('second',t);return;}
         run.secondDone=true;sync('done');info('3分鐘磁鐵時窗已過，交由捨棄重進');return;
       }
-      move();info(run.secondDone?'第二顆磁鐵已處理，準備捨棄':'原地刷怪，3:00再找磁鐵');
+      move();info(run.secondDone?'第二顆磁鐵已處理，準備捨棄':'原地刷怪，3:00再找第二顆磁鐵');
     }
   }
   function stop({remember=true}={}){

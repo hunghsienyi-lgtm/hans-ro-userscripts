@@ -6,10 +6,10 @@
 
 | 腳本 | 版本 | Tampermonkey 安裝來源 |
 | --- | --- | --- |
-| 二轉巫師：五核心＋目標／衝擊；三分鐘巡走達 Lv30 後停止選升級牌 | 1.21 | [HANS_Wizard_AutoSkill.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Wizard_AutoSkill.user.js) |
+| 二轉巫師：五核心＋目標／衝擊；三分鐘巡走 Lv30 最後技能照選、Lv31 後免翻牌 | 1.22 | [HANS_Wizard_AutoSkill.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Wizard_AutoSkill.user.js) |
 | 斐揚森林：首次 1:00、之後每分鐘採集 | 1.9.2 | [HANS_Forest_Magnet_Loot.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Forest_Magnet_Loot.user.js) |
 | **開局巡走／2、3、6 分鐘與之後每 2 分鐘找磁鐵／Boss 繼續採集／Lv120 免翻牌**（覆蓋原文字重進腳本） | **2.1.0** | [HANS_Payon_Auto_Reenter.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Payon_Auto_Reenter.user.js) |
-| **三分鐘刷卡專用巡走**：開場巡走、0:30 與 3:00 磁鐵、Lv30 免翻牌；與右下角短場重進同步 | **1.0.0** | [HANS_ThreeMinute_Magnet_Patrol.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_ThreeMinute_Magnet_Patrol.user.js) |
+| **三分鐘刷卡專用巡走**：走 30 秒、返點站打 30 秒、Lv30 停止亂走、3:00 磁鐵 | **1.0.3** | [HANS_ThreeMinute_Magnet_Patrol.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_ThreeMinute_Magnet_Patrol.user.js) |
 | **選關＋戰利品整合版（右下角）**：小地圖下精簡掉落即時記錄、3 分鐘磁鐵協調、選關、Discord、場次 CSV | **0.7.4** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
 
 **2026-11-16 起，選關與戰利品已整合為同一支腳本。** 請在 Tampermonkey 將戰利品更新到 v0.7.4；原『文字重進』已更新改為 v2.1.0 的獨立巡走／磁鐵腳本，不再負責重進，自動重進改由右下角戰利品面板內的「重進」開關與關卡選單控制（不再顯示右上角固定視窗）。其餘巫師選技及森林採集維持獨立。安裝前先停用重複用途舊版腳本。後續更新時保留檔名與網址，增加腳本 `@version`，上傳覆寫到 `main`，Tampermonkey 依設定定期檢查 `@updateURL` 並取得 `@downloadURL`。更新頻率依瀏覽器與 Tampermonkey 設定而異；如需即時更新，可在 Tampermonkey 手動檢查更新。
@@ -97,3 +97,11 @@ HANS 在高怪量／高難度時可能顯示「◆ 高難度提醒」，內容�
 - 若結算畫面縮圖仍有可讀名稱，會和本場精簡提示紀錄比對以減少重複計算。
 - **限制：** 只有在提示文字實際存在網頁 DOM 時才能擷取。若提示完全繪製在 Canvas 上或文字出現時間短於一次 DOM 更新，腳本無法保證辨識；截圖本身不足以確認 HANS 的實際實作，仍需在遊戲內驗證。
 - 目前不從精簡提示猜測未顯示的 TIER、屬性、是否回收／保留；本功能也無法恢復被系統自動販售的裝備。
+
+## v1.0.3 三分鐘巡走修正（搭配巫師選技 v1.22）
+
+- **開場先巡走30秒**；達 0:30 或提前達到 Lv30，即停止隨機巡走並返回偵測到的開場座標。
+- 回到原點後，使用遊戲內計時確實原地站打 **30秒**，才啟動第一輪磁鐵搜尋；因此第一輪不再固定 0:30 出發，而是約 1:00 之後（依返點耗時），最晚不能耽誤 3:00 第二輪。搜尋不到磁鐵時原地等待，不再隨機遊走。
+- **Lv30 時優先返點、不再隨機巡走**。為免漏掉最後一張技能卡，巫師選技 v1.22 仍選 Lv30 那張；從 Lv31 升級畫面才由巡走腳本按「之後不再翻牌」。固定磁鐵搜尋屬明確例外，不是任意走動。
+- **3:00 第二輪磁鐵保留**；只有第二輪完成且真正返回原點才發送短場完成訊號，右下角 3分鐘捨棄重進仍負責下一輪。
+- 升級畫面會暫停小地圖繪製：v1.0.3 優先檢查 Lv30／Lv31，避免因座標 950ms 未更新而漏過關鍵事件。更新後仍需 HANS 遊戲內實測；建議先檢查 Lv30 最後卡片與 3:00 第二輪磁鐵。

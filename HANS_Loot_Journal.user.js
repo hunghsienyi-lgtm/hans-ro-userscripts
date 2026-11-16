@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.8.3
-// @description  修復重進後下滾失效：允許 DOM/圖片式小地圖、入場後可靠排程下滾10次，右下角顯示縮放狀態；保留三周目選關與戰利品。
+// @version      0.8.4
+// @description  修復漏下滾：恢復舊版畫面中央 WheelEvent、任何新戰鬥都排程10次，加入手動下滾測試按鈕與狀態；保留三周目、戰利品。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.8.3';
+  const VERSION = '0.8.4';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -673,9 +673,9 @@
     ui.style.cssText='position:fixed;right:7px;bottom:8px;z-index:2147483647;max-width:calc(100vw - 14px);'+
       'font:12px/1.45 system-ui,sans-serif;color:#fff;background:#203452f0;border:1px solid #98b5db;'+
       'border-radius:8px;padding:6px;box-shadow:0 3px 12px #0007';
-    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.8.3 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
+    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.8.4 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
       <div id="roj4-menu" hidden style="width:265px;max-width:80vw;max-height:60vh;overflow-y:auto;padding-top:6px">
-        <div style="font-size:10px;opacity:.78">HANS 整合 v0.8.3 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
+        <div style="font-size:10px;opacity:.78">HANS 整合 v0.8.4 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
         <div id="roj4-discord">Discord：開｜待送 0</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
           <button id="roj4-toggle">暫停紀錄</button><button id="roj4-notify">關閉 DC</button>
@@ -1071,7 +1071,13 @@
   zoomStatus.id='hans-entry-wheel-status';
   zoomStatus.style.cssText='margin-top:5px;color:#c7e9ff;font:11px/1.35 sans-serif';
   zoomStatus.textContent='入場滾輪：等待進場（下滾10次）';
-  hud.append(btn,worldPicker,picker,shortGroup,shortHelp,zoomStatus,msg);
+  const zoomTestButton=document.createElement('button');
+  zoomTestButton.type='button';
+  zoomTestButton.id='hans-test-wheel';
+  zoomTestButton.textContent='測試下滾10次';
+  zoomTestButton.title='目前在戰鬥畫面時立即重新發送10次滾輪，方便辨識HANS是否有接收合成滑鼠事件；不改遊戲倍率';
+  zoomTestButton.style.cssText='margin:4px 0 0;color:white;background:#496f98;padding:3px 7px;border:1px solid #a7c7ed;border-radius:5px;font:11px sans-serif;cursor:pointer';
+  hud.append(btn,worldPicker,picker,shortGroup,shortHelp,zoomStatus,zoomTestButton,msg);
   mountStageIntoLootPanel();
   const uiElements=[btn,worldPicker,picker,shortToggle,shortGrace];
   if(uiElements.some(el=>!hud.contains(el)) || hud.parentElement?.id!=='roj4-menu'){
@@ -1204,7 +1210,7 @@
   const ZOOM_READY_DELAY = 2000; // 真正顯示遊戲畫面並可操作後，再等 2 秒才滾
   const ZOOM_MAX_WAIT = 90000;
   let pendingZoomAt = 0, zoomInProgress = false, zoomMapReadyAt = 0;
-  let zoomSent=0,zoomSessionId=0,zoomMapState='';
+  let zoomSent=0,zoomSessionId=0,zoomMapState='',forceZoom=false;
   function zoomNote(message){
     const text='入場滾輪：'+message;
     if(zoomStatus.textContent!==text)zoomStatus.textContent=text;
@@ -1221,14 +1227,24 @@
   }
   pendingZoomAt=readZoomPending();
   if(pendingZoomAt)zoomNote('已保留前次入場排程，等待地圖');
-  function queueZoom() {
-    if(zoomInProgress)return; // 避免入場事件重複覆蓋正在執行的滾輪
-    if(pendingZoomAt && Date.now()-pendingZoomAt < ZOOM_MAX_WAIT)return;
+  function queueZoom(force=false) {
+    if(zoomInProgress){zoomNote('已在下滾中，不重複執行');return;}
+    if(!force&&pendingZoomAt && Date.now()-pendingZoomAt < ZOOM_MAX_WAIT)return;
     pendingZoomAt=Date.now();
-    zoomMapReadyAt=0;zoomSent=0;zoomSessionId++;
-    zoomNote('已排程下滾 '+ZOOM_STEPS+' 次，等待地圖');
+    zoomMapReadyAt=0;zoomSent=0;zoomSessionId++;forceZoom=!!force;
+    zoomNote((force?'手動測試：':'新局：')+'排程下滾 '+ZOOM_STEPS+' 次');
     try{sessionStorage.setItem(ZOOM_PENDING_KEY,String(pendingZoomAt));}catch{}
   }
+  zoomTestButton.addEventListener('click',()=>{
+    if(!mapReadyForZoom()){
+      zoomNote('測試失敗：須在無選卡／暫停的戰鬥畫面');
+      return;
+    }
+    combatSeen=true;combatZoomQueued=true;
+    queueZoom(true);
+    zoomMapReadyAt=Date.now()-ZOOM_READY_DELAY-50; // 人工點擊時遊戲畫面已可見
+    checkEntryZoom();
+  });
   function clearZoomPending() {
     pendingZoomAt=0;
     zoomMapReadyAt=0;
@@ -1250,47 +1266,42 @@
     return !!(miniCoords&&shown(miniCoords));
   }
   function monitorNewRoundZoom() {
-    // UI 切到結算／主城後解除單局鎖，下一場開始時才再滾輪。
-    // Level Up 暫停不解除鎖，避免短時間反覆下滾。
+    // 每次戰鬥實際出現，無論自動重進是開或關，都應自動下滾一次。
+    // 前版僅在 active=true 且 <=35秒 才能補排，漏掉手動進場或載入較慢的局。
     if(resultVisible() || difficultyOpen() || expeditionOpen() ||
        highDifficultyPrompt() || incompleteDialog() || findControl(W.back) || findControl(W.talk)){
       combatSeen=false;combatZoomQueued=false;combatLastSeconds=null;
       return;
     }
-    // 關閉自動重進且沒有使用者觸發的入場排程時，不介入手動遊玩視角。
-    if(!active&&!pendingZoomAt)return;
     const seconds=readCombatSeconds();
-    if(seconds===null)return;
     const mini=document.querySelector('#minimap');
-    if(!mini||!shown(mini))return;
-    // Boss 14:00 後可能轉成 2:00 倒數；只認回到 0:00~0:20 才是新局，
-    // 防止 Boss 倒數到 0:35 時再次意外縮放。
+    if(!mini||!shown(mini)||seconds===null)return;
     const newRound=!combatSeen || (combatLastSeconds!==null &&
       seconds<=20 && seconds+20<combatLastSeconds);
     if(newRound){
       combatSeen=true;combatZoomQueued=false;
     }
     combatLastSeconds=seconds;
-    if(seconds<=35&&!combatZoomQueued){
+    if(!combatZoomQueued){
       combatZoomQueued=true;
       if(!pendingZoomAt&&!zoomInProgress){
         queueZoom();
-        tell('偵測到新一局，補排入場下滾 '+ZOOM_STEPS+' 次');
+        tell('偵測到新局 '+Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0')+'，排入場下滾');
       }
     }
   }
   function zoomCanvas() {
-    // 優先尋找真正的遊戲畫布，避免中心像素被資訊文字/透明 UI 覆蓋。
+    // 恢復舊版 v0.6.x 的行為：先將滾輪送到畫面中央最上層的遊戲元素。
+    // HANS 使用 Three.js，滑鼠滾輪可能繫結在畫面上的 DOM 事件路徑，而非 canvas 本身。
+    const centerElement=document.elementFromPoint(Math.floor(innerWidth*.50),Math.floor(innerHeight*.50));
+    if(centerElement && !hud.contains(centerElement) &&
+      !centerElement.closest('#minimap,#picker,#roj4-menu'))return centerElement;
     const choices=[...document.querySelectorAll('canvas')].filter(el =>
-      !el.closest('#minimap') && !hud.contains(el) && shown(el) &&
-      rct(el).width>=innerWidth*.38 && rct(el).height>=innerHeight*.30);
+      !el.closest('#minimap') && !hud.contains(el) && shown(el));
     choices.sort((a,b)=>{
       const ar=rct(a),br=rct(b);return br.width*br.height-ar.width*ar.height;
     });
     if(choices.length)return choices[0];
-    const centerElement=document.elementFromPoint(Math.floor(innerWidth*.50),Math.floor(innerHeight*.50));
-    if(centerElement && !hud.contains(centerElement) &&
-      !centerElement.closest('#minimap,#picker,#roj4-menu'))return centerElement;
     // 2D / DOM 遊戲備援：事件會往上冒泡至 document/window。
     for(const selector of ['#game-canvas','#game-container','#game','#world','#game-view']){
       const el=document.querySelector(selector);
@@ -1343,7 +1354,8 @@
       tell(`進圖下滾：${count}/${ZOOM_STEPS}（實際視角需遊戲確認）`);
       if(count < ZOOM_STEPS){setTimeout(step,ZOOM_STEP_INTERVAL);}
       else{zoomInProgress=false;clearZoomPending();
-        zoomNote('本局已送出 '+ZOOM_STEPS+' 次（非視角成功保證）');
+        zoomNote((forceZoom?'手動測試':'本局')+'已送出 '+ZOOM_STEPS+' 次（請觀察鏡頭）');
+        forceZoom=false;
         tell(`本局已送出 ${ZOOM_STEPS} 次下滾事件`);}
     }
     step();

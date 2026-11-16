@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 二轉巫師｜五核心自動選技＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.20
-// @description  先學齊暴風雪、霜凍之術與三箭，再優先 +目標／+衝擊；衝擊限兩個冰系核心；寶箱尋寶率優先。
+// @version      1.21
+// @description  原五核心選技與衝擊／目標排序不變；3分鐘巡走模式下Lv30起停止選升級卡，讓「之後不再翻牌」生效。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
 // @run-at       document-idle
@@ -12,7 +12,7 @@
 // ==/UserScript==
 (() => {
   'use strict';
-  if (document.getElementById('hans-mage-autoskill-v120')) return;
+  if (document.getElementById('hans-mage-autoskill-v121')) return;
   const potion = [/傷害藥水|damage potion|potion of damage/i, /範圍藥水|area potion|potion of area/i];
   const label = '巫師';
   const shown = el => {
@@ -85,7 +85,7 @@
     return {amount:Math.max(target,impact),kind:impact>target?'衝擊':'目標'};
   }
 
-  // v1.20：二轉五核心；暴風雪 > 霜凍之術 > 三箭；「冰凍術」不是「霜凍之術」。
+  // v1.21：二轉五核心；暴風雪 > 霜凍之術 > 三箭；「冰凍術」不是「霜凍之術」。
   const coreSkills = [
     {id:'storm', label:'暴風雪', name:/暴風雪|storm\s*gust|\bblizzard\b/i,
       slot:/blizzard|storm[-_]?gust|(?:^|[_.-])storm(?:gust)?$|^stormgust$|^wizardstorm$/i},
@@ -139,7 +139,7 @@
   }
   function scoreSkill(card,info){
     const core=coreOf(card), newSkill=isNew(card), text=read(card,'.pk-lines').normalize('NFKC');
-    // v1.20：先拿缺少的五大核心技能；五核心齊全後才把 +目標／+衝擊列為第一優先。
+    // v1.21：先拿缺少的五大核心技能；五核心齊全後才把 +目標／+衝擊列為第一優先。
     // 即使卡片上同時寫有 +目標，只要它屬於「新技能」，仍按補技能處理。
     if(newSkill && info.full) return {score:-Infinity,reason:'技能格已滿'};
     if(newSkill){
@@ -291,7 +291,7 @@
     if (message===lastDiagnostic) return;
     lastDiagnostic=message;
     if (button) button.title='Shift+1 切換；目前：'+message;
-    console.info('[HANS 巫師 v1.20]',message);
+    console.info('[HANS 巫師 v1.21]',message);
   }
   let nextRerollAt=0, pending=null, lastChoiceAt=0, lastChoiceKey='',choiceTries=0;
   const attempts=new WeakMap();
@@ -337,6 +337,18 @@
       read(panel,'.pk-title')||read(panel,'h1'));
     const chest=/^(?:寶箱|寶箱選擇|treasure\s*chest)\s*!?$/i.test(title);
     const level=/^(?:升\s*級|強化\s*技能|level\s*up|upgrade\s*(?:a\s*)?skill)\s*!?$/i.test(title);
+    // 三分鐘刷卡巡走在 Lv30 會按「之後不再翻牌」；巫師選技不能先搶選卡。
+    // 只攔截這個模式下的 Lv30+ 升級畫面，不干擾其他模式與寶箱尋寶率。
+    let shortPatrol=false;
+    try{shortPatrol=sessionStorage.getItem('hans_ro_three_min_patrol_enabled_v1')==='1';}catch{}
+    if(shortPatrol&&!chest&&level){
+      const lvText=String(panel.innerText||panel.textContent||'').normalize('NFKC');
+      const m=lvText.match(/Lv\.?\s*(\d{1,3})\s*[:：]/i);
+      if(m&&Number(m[1])>=30){
+        diagnostic('三分鐘巡走 Lv'+m[1]+'：等待「之後不再翻牌」，不再自動選卡');
+        return;
+      }
+    }
     const byLayout=!chest&&!level&&shown(document.querySelector('#lu-sockets'))&&!!panel.querySelector('button.pk-card');
     if(!chest&&!level&&!byLayout){diagnostic('未知選卡標題：'+title.slice(0,60));return;}
     const asking=panel.querySelector('.pk-slot.asking');
@@ -402,20 +414,20 @@
   }
   const safeTick=()=>{try{tick();}catch(error){
     diagnostic('腳本錯誤：'+String(error?.message||error));
-    console.error('[HANS 巫師 v1.20]',error);
+    console.error('[HANS 巫師 v1.21]',error);
   }};
   function enable(on){
     clearInterval(timer);
     timer=on?setInterval(safeTick,400):null;
-    button.textContent=label+'選技：'+(on?'開':'關')+' v1.20';
+    button.textContent=label+'選技：'+(on?'開':'關')+' v1.21';
     button.style.background=on?'#186442':'#384455';
     diagnostic(on?'已開啟，等待選卡畫面':'已關閉；按鈕或 Shift+1 開啟');
   }
   function mount(){
     if(!document.body){setTimeout(mount,100);return;}
-    if(document.getElementById('hans-mage-autoskill-v120'))return;
+    if(document.getElementById('hans-mage-autoskill-v121'))return;
     button=document.createElement('button');button.type='button';
-    button.id='hans-mage-autoskill-v120';
+    button.id='hans-mage-autoskill-v121';
     button.style.cssText='position:fixed;left:8px;bottom:84px;z-index:2147483647;color:white;border:1px solid white;border-radius:5px;padding:5px 8px;cursor:pointer';
     button.onclick=()=>{
       const on=timer===null;

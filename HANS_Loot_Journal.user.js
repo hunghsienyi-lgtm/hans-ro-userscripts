@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 戰利品全紀錄｜金色通知＋每場總表
 // @namespace    ro-local-loot-journal
-// @version      0.6.5
-// @description  HANS 選關＋戰利品：自動向下掃描全部遠征關卡，右下角切換目標；結算封存再重進、難度與戰利品統計。
+// @version      0.7.0
+// @description  HANS 選關＋戰利品：新增可選的3分鐘刷樹精卡（ESC→主選單→捨棄→自動重進），小王緩衝可選0–60秒。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.6.5';
+  const VERSION = '0.7.0';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -585,9 +585,9 @@
     ui.style.cssText='position:fixed;right:7px;bottom:8px;z-index:2147483647;max-width:calc(100vw - 14px);'+
       'font:12px/1.45 system-ui,sans-serif;color:#fff;background:#203452f0;border:1px solid #98b5db;'+
       'border-radius:8px;padding:6px;box-shadow:0 3px 12px #0007';
-    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.6.5 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
+    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.7.0 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
       <div id="roj4-menu" hidden style="width:265px;max-width:80vw;max-height:60vh;overflow-y:auto;padding-top:6px">
-        <div style="font-size:10px;opacity:.78">HANS 整合 v0.6.5 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
+        <div style="font-size:10px;opacity:.78">HANS 整合 v0.7.0 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
         <div id="roj4-discord">Discord：開｜待送 0</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
           <button id="roj4-toggle">暫停紀錄</button><button id="roj4-notify">關閉 DC</button>
@@ -841,7 +841,7 @@
   if(!STAGES[savedTarget]&&savedTarget.startsWith('hans:'))rememberStage(savedTarget.slice(5),true);
   picker.value=STAGES[savedTarget]?savedTarget:'cave';
 
-  hud.append(btn,picker,msg);
+  hud.append(btn,picker,shortGroup,shortHelp,msg);
   // 選關與戰利品共用右下原本面板。若主面板尚未生成，重試掛載，不開第二個浮窗。
   function mountStageIntoLootPanel(){
     if(!document.body){setTimeout(mountStageIntoLootPanel,200);return;}
@@ -870,12 +870,12 @@
     try{
       const x=JSON.parse(sessionStorage.getItem(SHORT_PHASE_KEY)||'null');
       if(x&&Date.now()-Number(x.at)<120000 &&
-        ['escape','menu','discard','done'].includes(x.phase))return x;
+        ['idle','escape','menu','discard','done'].includes(x.phase))return x;
     }catch{}
     return {phase:'idle',at:0,tries:0,lastAction:0,armed:false};
   })();
   const saveShortExit=()=>{try{
-    if(shortExit.phase==='idle')sessionStorage.removeItem(SHORT_PHASE_KEY);
+    if(shortExit.phase==='idle'&&!shortExit.armed)sessionStorage.removeItem(SHORT_PHASE_KEY);
     else sessionStorage.setItem(SHORT_PHASE_KEY,JSON.stringify(shortExit));
   }catch{}};
   const resetShortExit=()=>{
@@ -1015,7 +1015,7 @@
     if(pickerPopup&&shown(pickerPopup))return false;
     const secs=readCombatSeconds();
     if(secs===null)return false;
-    if(secs<=45&&!shortExit.armed){shortExit.armed=true;saveShortExit();}
+    if(secs<=45&&!shortExit.armed){shortExit.armed=true;shortExit.at=Date.now();saveShortExit();}
     if(!shortExit.armed){tell('3分鐘刷卡待命：下一場開局才開始');return false;}
     if(secs<180+shortPrefs.grace)return false;
     shortExit.gameSeconds=secs;shortPhase('escape');
@@ -1127,8 +1127,10 @@
     if (state===p) return;
     state=p; attempts={}; lastAt=0;stageClickedAt=0;beforeStageWasStory=false;departAt=0;wildernessAt=0;
   }
-  function enable(value) {
+  function enable(value,{remember=true}={}) {
     active=value;clearInterval(timer);phase('');
+    if(remember)try{sessionStorage.setItem(REENTRY_KEY,value?'1':'0');}catch{}
+    if(!active)resetShortExit();
     btn.textContent=`重進：${active?'開':'關'}（Shift+5）`;
     btn.style.background=active?'#146f4c':'#5c6b82';
     const mini=document.getElementById('roj4-stage-mini');
@@ -1303,6 +1305,9 @@
   function tick() {
     if(!active||document.hidden)return;
     try {
+      // 三分鐘捨棄確認優先於一般遠征重進；未完成局不可由普通選關誤點過去。
+      if(handleShortRun())return;
+      if(incompleteDialog()){tell('未完成的一局請手動確認或啟用3分鐘刷卡模式');return;}
       if(difficultyOpen()){handleDifficulty();return;}
       if(expeditionOpen()){stageExplorerTick();handleExpedition();return;}
       const back=findControl(W.back);
@@ -1323,7 +1328,9 @@
     }catch(e){console.warn('[HANS 關卡清單]',e)}
   },850);
   window.addEventListener('pagehide',()=>clearInterval(timer));
-  enable(false);
+  let restoreReentry=false;
+  try{restoreReentry=sessionStorage.getItem(REENTRY_KEY)==='1';}catch{}
+  enable(restoreReentry,{remember:false});
 })();
 
 })();

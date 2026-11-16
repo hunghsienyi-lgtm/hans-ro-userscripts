@@ -10,7 +10,7 @@
 | 斐揚森林：首次 1:00、之後每分鐘採集 | 1.9.2 | [HANS_Forest_Magnet_Loot.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Forest_Magnet_Loot.user.js) |
 | **長場巡走／1:55、2:55、5:55、之後每2分鐘前5秒找磁鐵／中途加入當前局／返點失敗安全停靠／Boss最後15秒只找磁鐵／Lv130 免翻牌**（覆蓋原文字重進腳本） | **2.3.0** | [HANS_Payon_Auto_Reenter.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Payon_Auto_Reenter.user.js) |
 | **三分鐘刷卡專用巡走**：Lv30返點站打30秒、0:55首顆、2:45起最後15秒只找磁鐵、Lv31免翻牌、3:00 磁鐵 | **1.0.5** | [HANS_ThreeMinute_Magnet_Patrol.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_ThreeMinute_Magnet_Patrol.user.js) |
-| **選關＋戰利品整合版（右下角）**：修復每次入場下滾10次／三周目獨立選關＋每場統一匯報＋死亡返回＋入場滾輪、3 分鐘磁鐵協調、選關、Discord、場次 CSV | **0.8.3** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
+| **選關＋戰利品整合版（右下角）**：恢復舊版畫面中央下滾／新增測試按鈕／三周目獨立選關＋每場統一匯報＋死亡返回＋入場滾輪、3 分鐘磁鐵協調、選關、Discord、場次 CSV | **0.8.4** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
 
 **2026-11-16 起，選關與戰利品已整合為同一支腳本。** 請在 Tampermonkey 將戰利品更新到 v0.7.4；原『文字重進』已更新改為 v2.1.0 的獨立巡走／磁鐵腳本，不再負責重進，自動重進改由右下角戰利品面板內的「重進」開關與關卡選單控制（不再顯示右上角固定視窗）。其餘巫師選技及森林採集維持獨立。安裝前先停用重複用途舊版腳本。後續更新時保留檔名與網址，增加腳本 `@version`，上傳覆寫到 `main`，Tampermonkey 依設定定期檢查 `@updateURL` 並取得 `@downloadURL`。更新頻率依瀏覽器與 Tampermonkey 設定而異；如需即時更新，可在 Tampermonkey 手動檢查更新。
 
@@ -194,3 +194,11 @@ HANS 點選「之後不再翻牌」後會出現「已關閉翻牌（這張選完
 - 優先向真正的主遊戲 canvas（如存在且面積足夠）送出 wheel；沒有主 canvas 時才找遊戲中心元素，保留 DOM 遊戲兼容。
 - 已用模擬 DOM 驗證不含 canvas 的小地圖可完成10次 wheel，選卡／主城／無戰鬥畫面時不會發送滾輪，並確認不重複排程。**注意：** `WheelEvent` 是瀏覽器合成事件；顯示送出10次不代表 HANS 已實際接收並改變視角，須實戰確認。
 - 一／二／三周目選關、三分鐘捨棄、長短巡走、巫師選技、戰利品與 Discord 場末通知的規則均未改動。
+
+## v0.8.4：恢復舊版滾輪事件路徑，增加直接測試
+
+- 使用者實際回報 v0.8.3 進場28秒仍沒有縮遠；先前的 DOM 模擬測試不等於 HANS 真實視角成功，已撤回成功暗示。
+- 對照 v0.6.x 原本使用的滾輪策略後，恢復**優先向畫面中央最上層元素送出 wheel**，不再把 canvas 當第一順位。仍排除小地圖和右下角腳本面板。
+- 取消自動重進必須開啟、遊戲時間必須在前35秒的過度限制；只要偵測到戰鬥計時＋小地圖，就替每一局排程一次下滾10次，含手動入場／頁面載入較慢的情況。
+- 右下角多出「測試下滾10次」：在戰鬥地圖、沒有選卡／暫停遮擋時可立即送出10次 WheelEvent，並顯示送出進度。若按此鈕仍沒有視角變化，代表事件目標或瀏覽器合成事件可能未被遊戲接受，不能再單靠加大次數或排程判定修復。
+- 已通過語法與五種 DOM 模擬：一般入場、1:18才接手、手動下滾、主城阻止、選卡畫面阻止。**HANS 真實網站的視角變化目前仍未實測。**

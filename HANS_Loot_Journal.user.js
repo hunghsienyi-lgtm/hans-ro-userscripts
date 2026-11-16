@@ -373,7 +373,8 @@
     const text=norm(modal.innerText);
     const pct=x=>{const m=text.match(new RegExp(x+'\\s*([\\d.,]+)\\s*%','i'));return m?Number(m[1].replace(',','.')):null;};
     const num=x=>{const m=text.match(new RegExp(x+'\\s*(?:×|x)?\\s*([\\d.,]+)','i'));return m?Number(m[1].replace(',','.')):null;};
-    const d={capturedAt:nowISO(),stage:stageId==='forest'?'斐揚森林':stageId==='cave'?'斐揚洞穴':pendingDifficulty?.stage||null,
+    const d={capturedAt:nowISO(),stage:stageId==='forest'?'斐揚森林':stageId==='cave'?'斐揚洞穴':
+      (typeof stageId==='string'&&stageId.includes('／')?stageId:pendingDifficulty?.stage||null),
       enemyCount:pct('敵人數量'),enemyDamage:pct('敵人傷害'),enemyHp:pct('敵人\\s*HP'),
       enemySpeed:pct('敵人速度'),eventCount:pct('事件數量'),stageLevel:num('關卡等級\\s*Lv\\.?'),
       dropMultiplier:num('掉寶'),equipmentMultiplier:num('裝備'),legendaryPct:pct('傳說率')};
@@ -895,6 +896,7 @@
   }
   function stageExplorerTick(){
     if(!expeditionOpen()){resetCatalog();catalog.world=null;return;}
+    if(worldClickAt&&Date.now()-worldClickAt<800)return; // 等周目切換動畫結束
     const tab=currentWorldState();
     if(tab.available&&tab.world===null){tell('目前周目狀態不明，暫停掃描');return;}
     const world=tab.world;
@@ -1567,7 +1569,7 @@
 
   function handleDifficulty() {
     phase('difficulty');
-    stageLootBridge.captureDifficulty(picker.value);
+    stageLootBridge.captureDifficulty(targetLabel());
     const go=findControl(W.wilderness);
     if(!go) {tell('難度視窗已開，等待「前往野外」按鈕');return;}
     if(wildernessAt && Date.now()-wildernessAt < 8000) {

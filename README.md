@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 二轉巫師：五核心＋目標／衝擊；三分鐘巡走 Lv30技能照選，Lv31先點免翻牌再完成眼前最後一張 | 1.23 | [HANS_Wizard_AutoSkill.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Wizard_AutoSkill.user.js) |
 | 斐揚森林：首次 1:00、之後每分鐘採集 | 1.9.2 | [HANS_Forest_Magnet_Loot.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Forest_Magnet_Loot.user.js) |
-| **開局巡走／2、3、6 分鐘與之後每 2 分鐘找磁鐵／中途加入當前局／返點失敗安全停靠／Boss 繼續採集／Lv130 免翻牌**（覆蓋原文字重進腳本） | **2.2.1** | [HANS_Payon_Auto_Reenter.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Payon_Auto_Reenter.user.js) |
+| **長場巡走／1:55、2:55、5:55、之後每2分鐘前5秒找磁鐵／中途加入當前局／返點失敗安全停靠／Boss最後15秒只找磁鐵／Lv130 免翻牌**（覆蓋原文字重進腳本） | **2.3.0** | [HANS_Payon_Auto_Reenter.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Payon_Auto_Reenter.user.js) |
 | **三分鐘刷卡專用巡走**：走到 Lv30 才返點、站打 30 秒、Lv31 免翻牌、3:00 磁鐵 | **1.0.4** | [HANS_ThreeMinute_Magnet_Patrol.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_ThreeMinute_Magnet_Patrol.user.js) |
 | **選關＋戰利品整合版（右下角）**：金色不逐件通知、每場統一匯報＋死亡結算返回＋下滾10次、3 分鐘磁鐵協調、選關、Discord、場次 CSV | **0.7.8** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
 
@@ -144,3 +144,11 @@ HANS 點選「之後不再翻牌」後會出現「已關閉翻牌（這張選完
 - 已過的磁鐵窗口不補跑；如果正在某個磁鐵時間後10秒內，仍可執行該次搜尋。例如5:57接手，等6:00搜尋；9:50接手，等10:00搜尋。之後維持2、3、6、8、10、12、14分鐘排程及Boss磁鐵監看。
 - 中途接手沒有真正的出生座標，因此介面明白標示**目前位置定點**；這不是原始開場座標。返點超時安全停靠與Lv130停止後續翻牌維持原本機制。三分鐘專用巡走並未修改。
 - 模擬時間軸覆蓋0:00、0:40、1:00、2:57、5:57、6:05、9:50和14:00，另需在HANS實際確認小地圖與計時可辨識。
+
+## v2.3.0 長場巡走：整分前5秒找磁鐵＋Boss最後15秒專注磁鐵
+
+- 原本 2:00／3:00／6:00／8:00／10:00／12:00／14:00 才啟動的找磁鐵，統一提前5秒，改成 **1:55、2:55、5:55、7:55、9:55、11:55、13:55** 開始；避免正好整分切換關卡階段時沒有時間執行。每段最多搜尋35秒，撿完通常仍返點，逾時不跨時段補跑。
+- HANS Boss 倒數若已被偵測，**最後15秒（0:15–0:00）** 最高優先轉為只追磁鐵：即使正在返點也中斷返點；有磁鐵才移動，沒磁鐵就原地監看；成功拾取也不再返回定點，以便在倒數結束前繼續尋找下一顆。
+- 防誤觸：僅 Boss 倒數已確認時才啟動最後15秒規則，不將一般開局0:15誤認為Boss最後15秒。中途開啟立即接手、Lv130免翻牌、返點失敗安全停靠仍保留。
+- 此修改僅針對 **Shift+6 長時間巡走**；Shift+7 三分鐘巡走及選關／戰利品整合版未修改。
+- 已完成語法與獨立模擬測試（七次定時、Boss最後15秒有／無磁鐵、拾取後不返點與非Boss15秒不觸發）；實際 HANS 遊戲移動與磁鐵取得仍需測試。

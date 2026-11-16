@@ -6,7 +6,7 @@
 
 | 腳本 | 版本 | Tampermonkey 安裝來源 |
 | --- | --- | --- |
-| 二轉巫師：優先暴風雪、補五核心再加目標／尋寶寶箱 | 1.19 | [HANS_Wizard_AutoSkill.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Wizard_AutoSkill.user.js) |
+| 二轉巫師：先補五核心，再優先 +目標／+衝擊（暴風雪與霜凍之術） | 1.20 | [HANS_Wizard_AutoSkill.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Wizard_AutoSkill.user.js) |
 | 斐揚森林：首次 1:00、之後每分鐘採集 | 1.9.2 | [HANS_Forest_Magnet_Loot.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Forest_Magnet_Loot.user.js) |
 | 舊版斐揚森林／洞穴自動重進（**已退役，不再自動點擊**） | 1.8.1 | [HANS_Payon_Auto_Reenter.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Payon_Auto_Reenter.user.js) |
 | **選關＋戰利品整合版（右下角）**：自動掃描全部可捲動關卡、結算穩定再返回、難度／倍率、場次 CSV、Discord | **0.6.5** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |

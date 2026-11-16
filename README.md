@@ -10,7 +10,7 @@
 | 斐揚森林：首次 1:00、之後每分鐘採集 | 1.9.2 | [HANS_Forest_Magnet_Loot.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Forest_Magnet_Loot.user.js) |
 | **長場巡走／1:55、2:55、5:55、之後每2分鐘前5秒找磁鐵／中途加入當前局／返點失敗安全停靠／Boss最後15秒只找磁鐵／Lv130 免翻牌**（覆蓋原文字重進腳本） | **2.3.0** | [HANS_Payon_Auto_Reenter.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Payon_Auto_Reenter.user.js) |
 | **三分鐘刷卡專用巡走**：Lv30返點站打30秒、0:55首顆、2:45起最後15秒只找磁鐵、Lv31免翻牌、3:00 磁鐵 | **1.0.5** | [HANS_ThreeMinute_Magnet_Patrol.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_ThreeMinute_Magnet_Patrol.user.js) |
-| **選關＋戰利品整合版（右下角）**：遠征免整份掃描／三周目獨立選關＋每場統一匯報＋死亡返回＋入場滾輪、3 分鐘磁鐵協調、選關、Discord、場次 CSV | **0.8.2** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
+| **選關＋戰利品整合版（右下角）**：修復每次入場下滾10次／三周目獨立選關＋每場統一匯報＋死亡返回＋入場滾輪、3 分鐘磁鐵協調、選關、Discord、場次 CSV | **0.8.3** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
 
 **2026-11-16 起，選關與戰利品已整合為同一支腳本。** 請在 Tampermonkey 將戰利品更新到 v0.7.4；原『文字重進』已更新改為 v2.1.0 的獨立巡走／磁鐵腳本，不再負責重進，自動重進改由右下角戰利品面板內的「重進」開關與關卡選單控制（不再顯示右上角固定視窗）。其餘巫師選技及森林採集維持獨立。安裝前先停用重複用途舊版腳本。後續更新時保留檔名與網址，增加腳本 `@version`，上傳覆寫到 `main`，Tampermonkey 依設定定期檢查 `@updateURL` 並取得 `@downloadURL`。更新頻率依瀏覽器與 Tampermonkey 設定而異；如需即時更新，可在 Tampermonkey 手動檢查更新。
 
@@ -185,3 +185,12 @@ HANS 點選「之後不再翻牌」後會出現「已關閉翻牌（這張選完
 - 遠征畫面只即時讀取當前可見關卡；周目狀態除按鈕 class/aria/顏色外，還用至少兩張同一周目後綴卡片（原名／`・改`／`・改²`）判斷。因此截圖中「三周目 + 普隆德拉原野・改²」不再要求人工掃描清單。
 - 選擇較後方地圖而畫面尚未顯示時，腳本會**只針對該地圖自動捲動尋找**；在取得 HANS 實際關卡卡片且確認解鎖、周目、右側預覽符合後才出征；無法確認就不出征。
 - 保留原先難度、重進、3分鐘刷卡、死亡返回、縮放及場末戰利品 Discord。已完成語法、周目名稱推論、候選／解鎖辨識及跨周目隔離模擬測試；實際 HANS 點擊仍須測試。
+
+## v0.8.3：修復自動重進後的下滾縮放與可見狀態
+
+- 問題定位：v0.8.2 的 `mapReadyForZoom()` 除要求 HANS 小地圖可見，還要求小地圖內必須存在 `<canvas>` 或 `#minimap-coords`。實際網頁可能使用圖片／CSS 小地圖，因此即使進入戰鬥，仍可能永遠無法觸發滾輪。
+- 修正後以「可見且有足夠尺寸的 `#minimap`」作為主要戰鬥畫面確認條件，仍會排除主城、遠征、難度、高難度確認、結算、暫停及升級選卡視窗。每局下滾仍為10次，間隔400ms，進圖穩定約2秒後執行。
+- 右下角整合面板新增「入場滾輪」狀態列，會顯示等待／排程／已送出幾次／完成／錯誤，方便直接判斷是否被頁面阻擋。
+- 優先向真正的主遊戲 canvas（如存在且面積足夠）送出 wheel；沒有主 canvas 時才找遊戲中心元素，保留 DOM 遊戲兼容。
+- 已用模擬 DOM 驗證不含 canvas 的小地圖可完成10次 wheel，選卡／主城／無戰鬥畫面時不會發送滾輪，並確認不重複排程。**注意：** `WheelEvent` 是瀏覽器合成事件；顯示送出10次不代表 HANS 已實際接收並改變視角，須實戰確認。
+- 一／二／三周目選關、三分鐘捨棄、長短巡走、巫師選技、戰利品與 Discord 場末通知的規則均未改動。

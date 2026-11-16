@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 二轉巫師：五核心＋目標／衝擊；三分鐘巡走 Lv30技能照選，Lv31先點免翻牌再完成眼前最後一張 | 1.23 | [HANS_Wizard_AutoSkill.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Wizard_AutoSkill.user.js) |
 | 斐揚森林：首次 1:00、之後每分鐘採集 | 1.9.2 | [HANS_Forest_Magnet_Loot.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Forest_Magnet_Loot.user.js) |
-| **開局巡走／2、3、6 分鐘與之後每 2 分鐘找磁鐵／Boss 繼續採集／Lv120 免翻牌**（覆蓋原文字重進腳本） | **2.1.0** | [HANS_Payon_Auto_Reenter.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Payon_Auto_Reenter.user.js) |
+| **開局巡走／2、3、6 分鐘與之後每 2 分鐘找磁鐵／返點失敗安全停靠／Boss 繼續採集／Lv130 免翻牌**（覆蓋原文字重進腳本） | **2.2.0** | [HANS_Payon_Auto_Reenter.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Payon_Auto_Reenter.user.js) |
 | **三分鐘刷卡專用巡走**：走到 Lv30 才返點、站打 30 秒、Lv31 免翻牌、3:00 磁鐵 | **1.0.4** | [HANS_ThreeMinute_Magnet_Patrol.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_ThreeMinute_Magnet_Patrol.user.js) |
 | **選關＋戰利品整合版（右下角）**：死亡結算自動返回＋每場下滾10次＋精簡掉落、3 分鐘磁鐵協調、選關、Discord、場次 CSV | **0.7.7** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
 
@@ -122,3 +122,10 @@ HANS 在高怪量／高難度時可能顯示「◆ 高難度提醒」，內容�
 ## v1.23 巫師 Lv31 最後一張卡修復
 
 HANS 點選「之後不再翻牌」後會出現「已關閉翻牌（這張選完就不再跳）」；**當前仍然需要選完最後一張**。舊巫師 v1.22 於 Lv31 直接停止選卡，因此停在 Level Up 畫面。v1.23 刪除 Lv31 阻斷，凡遊戲仍顯示選卡視窗就持續依五核心／+目標／+衝擊原優先順序選卡並確認。面板收起後才結束。寶箱仍以最大正向尋寶率優先；三分鐘巡走 v1.0.4 在 Lv31 點免翻牌的機制未更動。已驗證語法、模擬 Lv31 選卡與選卡確認動作，實際 HANS 須更新後測試。
+
+## v2.2.0 長時間巡走（Shift+6）返點與 Lv130 修正
+
+- 「返點超時，暫停移動避免撞牆」原先把本局設成 `failed`，後續磁鐵搜尋一律停止。現在返點不可達／繞路超限時，先停止方向鍵並把**目前實際玩家位置**標成臨時定點，繼續原地打怪與之後磁鐵排程；明確顯示「原點路徑受阻／已改就地定點」，不冒稱真的回到原始出生點。下次磁鐵也以臨時定點返航。
+- **免翻牌門檻改為 Lv130**，不再需要等 6:00 磁鐵完成；Lv129 不處理，Lv130 會按「之後不再翻牌」。畫面上當次最後一張技能仍需由巫師選技 v1.23 選完。
+- 提前讀取 Lv130 選卡畫面，即使小地圖停止刷新也能觸發免翻牌。保留 2／3／6／8／10／12／14 分鐘磁鐵及 Boss 磁鐵監看。
+- 這次只更動原長時間巡走 `HANS_Payon_Auto_Reenter.user.js`；三分鐘巡走 v1.0.4 未更動。模擬測試涵蓋正常返點、超時後安全停靠、繞路失敗後安全停靠、Lv129／130／131；實際地圖導航仍需在 HANS 測試。

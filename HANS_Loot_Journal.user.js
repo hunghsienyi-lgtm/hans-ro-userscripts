@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         HANS RO 戰利品全紀錄｜金色通知＋每場總表
+// @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.7.7
-// @description  修正「你死了」也會等死亡結算與卡片記錄完成再自動按返回角色；保留每局重進下滾10次、3分鐘刷卡、精簡掉落。
+// @version      0.7.8
+// @description  金色與其他戰利品一律只在每場結束後統一發 Discord 總表；保留選關、重進下滾、三分鐘刷卡及精簡掉落。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.7.7';
+  const VERSION = '0.7.8';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -50,6 +50,12 @@
   let settings = {...{running:true,notify:true},...jsonRead(SETTINGS_KEY,{})};
   let outbox=jsonRead(OUTBOX_KEY,[]);
   if (!Array.isArray(outbox)) outbox=[];
+  // 升級前可能仍留有尚未發送的「金色逐件通知」。
+  // 只移除這一類待送通知；保留已排隊的每場總表及使用者手動測試訊息。
+  const previousOutboxLength=outbox.length;
+  outbox=outbox.filter(entry=>!/^金色[｜|]/.test(String(entry?.name||'')));
+  if(outbox.length!==previousOutboxLength)
+    saveJSON(OUTBOX_KEY,outbox);
   let currentRun=jsonRead(RUN_KEY,null);
   if (!currentRun || typeof currentRun!=='object' || !currentRun.id || !['active','settled'].includes(currentRun.phase)) currentRun=null;
   let resultSeenAt=0, resultStableSince=0, resultFingerprint='';
@@ -91,7 +97,7 @@
   function updateUI(){
     if(countEl)countEl.textContent=`共 ${records.length}｜本場 ${runRecords().length}｜精簡 ${runRecords().filter(r=>/精簡掉落提示/.test(r.origin||'')).length}`;
     if(recentEl)recentEl.textContent=`最近：${lastRecord?`${lastRecord.name}（${typeName(lastRecord)}）`:'尚無'}`;
-    if(discordEl)discordEl.textContent=`Discord：${settings.notify?'開':'關'}｜金色即時＋結算總表｜待送 ${outbox.length}${sending?'（發送中）':''}`;
+    if(discordEl)discordEl.textContent=`Discord：${settings.notify?'開':'關'}｜僅每場結束總表｜待送 ${outbox.length}${sending?'（發送中）':''}`;
     if(stateEl)stateEl.textContent=lastStatus;
   }
   function linesFrom(root){
@@ -189,7 +195,8 @@
     records.push(rec);lastRecord=rec;
     if(!saveJSON(DATA_KEY,records))status('記錄暫存在記憶體；請匯出備份');
     else status(`已記錄 ${rec.type}：${rec.name}`);
-    if(settings.notify && isGold(rec))queueDiscordPayload(discordPayload(rec),`金色｜${rec.name}`);
+    // 全部品質（含傳說金色）只寫入本機清單；不在掉落當下發 Discord。
+    // 正常通關、死亡結算或三分鐘主動捨棄時由 finishRun／settleShortRun 統一報告。
     updateUI();return rec;
   }
   function scanPopup(tag='畫面掃描'){
@@ -665,9 +672,9 @@
     ui.style.cssText='position:fixed;right:7px;bottom:8px;z-index:2147483647;max-width:calc(100vw - 14px);'+
       'font:12px/1.45 system-ui,sans-serif;color:#fff;background:#203452f0;border:1px solid #98b5db;'+
       'border-radius:8px;padding:6px;box-shadow:0 3px 12px #0007';
-    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.7.7 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
+    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.7.8 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
       <div id="roj4-menu" hidden style="width:265px;max-width:80vw;max-height:60vh;overflow-y:auto;padding-top:6px">
-        <div style="font-size:10px;opacity:.78">HANS 整合 v0.7.7 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
+        <div style="font-size:10px;opacity:.78">HANS 整合 v0.7.8 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
         <div id="roj4-discord">Discord：開｜待送 0</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
           <button id="roj4-toggle">暫停紀錄</button><button id="roj4-notify">關閉 DC</button>
@@ -675,7 +682,7 @@
           <button id="roj4-csv">匯出 CSV</button><button id="roj4-runs">場次 CSV</button><button id="roj4-json">匯出 JSON</button>
           <button id="roj4-scan">立即掃描</button><button id="roj4-diag">複製診斷</button>
         </div>
-        <div style="opacity:.8;font-size:10px;padding-top:5px">僅「傳說（金色）」逐件推播；每場結算後推送本場已辨識全部戰利品。請定期匯出備份。</div>
+        <div style="opacity:.8;font-size:10px;padding-top:5px">所有品質（含傳說金色）都先存本機；每場結束才發 Discord 戰利品總表，不再逐件通知。請定期匯出備份。</div>
       </div>`;
     ui.querySelectorAll('button:not(#roj4-open)').forEach(b=>{b.style.cssText='background:#365d96;color:white;border:1px solid #83a7d8;border-radius:4px;padding:4px 6px;cursor:pointer';});
     document.body.append(ui);

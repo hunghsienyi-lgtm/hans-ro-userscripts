@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.8.0
-// @description  HANS 遠征一／二／三周目獨立選關，出征前核對周目；保留自動重進、滾輪、短場與戰利品。
+// @version      0.8.1
+// @description  HANS 一／二／三周目依原名／・改／・改²辨識全部地圖，逐周掃描避免錯關；保留自動重進、滾輪、短場與戰利品。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.8.0';
+  const VERSION = '0.8.1';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -673,9 +673,9 @@
     ui.style.cssText='position:fixed;right:7px;bottom:8px;z-index:2147483647;max-width:calc(100vw - 14px);'+
       'font:12px/1.45 system-ui,sans-serif;color:#fff;background:#203452f0;border:1px solid #98b5db;'+
       'border-radius:8px;padding:6px;box-shadow:0 3px 12px #0007';
-    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.8.0 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
+    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.8.1 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
       <div id="roj4-menu" hidden style="width:265px;max-width:80vw;max-height:60vh;overflow-y:auto;padding-top:6px">
-        <div style="font-size:10px;opacity:.78">HANS 整合 v0.8.0 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
+        <div style="font-size:10px;opacity:.78">HANS 整合 v0.8.1 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
         <div id="roj4-discord">Discord：開｜待送 0</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
           <button id="roj4-toggle">暫停紀錄</button><button id="roj4-notify">關閉 DC</button>
@@ -779,6 +779,22 @@
   })();
   const namePattern=name=>new RegExp('^'+[...norm(name)].map(ch=>
     /[\p{L}\p{N}]/u.test(ch)?ch:'\\'+ch).join('')+'$','i');
+  // 2026 HANS 遠征：一周目原名、二周目「・改」、三周目「・改²」。
+  // norm 會把上標²轉成2，因此所有比較都採同一正規化口徑；顯示文字保留原來的²。
+  const REFORM_MARK=/[・･·‧•∙．]改(?:2)?$/u;
+  function stageNameWorld(name){
+    const n=norm(name);
+    if(/[・･·‧•∙．]改2$/u.test(n))return 3;
+    if(/[・･·‧•∙．]改$/u.test(n))return 2;
+    return 1;
+  }
+  function baseStageName(name){return norm(name).replace(REFORM_MARK,'');}
+  function stageFitsWorld(name,world){return stageNameWorld(name)===Number(world);}
+  function stageLabelForWorld(base,world){
+    // 用於診斷／提示，實際選關名稱仍以遊戲畫面掃到的文字為準。
+    return base+(world===2?'・改':world===3?'・改²':'');
+  }
+
   const chosenWorld=()=>Number(worldPicker.value)||1;
   function redrawStageChoices(){
     const world=chosenWorld(),before=picker.value;
@@ -800,6 +816,7 @@
   function rememberStage(name,unlocked,level='',world=1){
     name=String(name||'').trim().replace(/[\r\n]+/g,' ');
     if(name.length<2||name.length>45||!WORLD_NAMES[world])return null;
+    if(!stageFitsWorld(name,world))return null; // 不以別周目的同名關卡覆蓋本周目
     const found=Object.entries(STAGES).find(([,v])=>v.world===world&&norm(v.name)===norm(name));
     const key=found?.[0]||'hans:w'+world+':'+norm(name);
     if(!STAGES[key])STAGES[key]={name,re:namePattern(name),unlocked,level,world};
@@ -820,8 +837,9 @@
         const rect=rct(p),cx=rect.left+rect.width/2,text=String(p.textContent||'');
         if(cx>innerWidth*.48||rect.width>innerWidth*.55)break;
         if(rect.width<115||rect.height<48||rect.height>175||text.length>350||!levelPattern.test(text))continue;
+        // 文字顯示要保留三周目的上標「²」，不能把品名直接 NFKC 成「改2」。
         const leaves=[...p.querySelectorAll('*')].filter(x=>x.childElementCount===0)
-          .map(x=>norm(x.textContent)).filter(Boolean);
+          .map(x=>String(x.textContent||'').trim()).filter(Boolean);
         const title=leaves.find(x=>x.length>=2&&x.length<=40&&/[\p{L}]/u.test(x)
           && !/^(?:Lv\.?\s*\d+[-–—~～]\d+|MVP.*|已通關|未解鎖|可挑戰|已選擇|劇情|出發|頭目.*)$/i.test(x)
           && !/^\d+(?:[:：]\d+)?$/.test(x));
@@ -854,6 +872,7 @@
   function readStageCatalog(world){
     const rows=stageRows();let change=false;
     for(const row of rows){
+      if(!stageFitsWorld(row.name,world))continue;
       const k=rememberStage(row.name,row.unlocked,row.level,world);
       if(k&&!catalog.observed.has(k)){catalog.observed.add(k);change=true}
     }
@@ -1452,7 +1471,7 @@
   }
   function stageTarget(){
     const target=norm(targetStage()?.name||'');
-    return target?stageRows().find(x=>norm(x.name)===target)||null:null;
+    return target?stageRows().find(x=>stageFitsWorld(x.name,chosenWorld())&&norm(x.name)===target)||null:null;
   }
   function seekStage(){
     const target=targetStage()?.name||'';
@@ -1462,7 +1481,7 @@
       if(catalog.scroll)catalog.scroll.scrollTop=0;
     }
     const rows=readStageCatalog(chosenWorld());
-    const row=rows.find(x=>norm(x.name)===norm(target));
+    const row=rows.find(x=>stageFitsWorld(x.name,chosenWorld())&&norm(x.name)===norm(target));
     if(row)return row;
     const el=catalog.scroll;
     if(!el||catalog.searchSteps>65||el.scrollTop>=el.scrollHeight-el.clientHeight-3){
@@ -1494,11 +1513,14 @@
     const row=stageTarget()||seekStage();
     if(!row)return;
     if(!row.unlocked){tell('關卡未解鎖，停止選擇：'+stage.name);return;}
+    if(!stageFitsWorld(row.name,chosenWorld())||!stageFitsWorld(stage.name,chosenWorld())){
+      tell('周目與關卡名稱不符，暫不出征：'+WORLD_NAMES[chosenWorld()]+'／'+stage.name);return;
+    }
     // 掃描右側預覽一次，避免新關卡增加後反覆遍歷整個畫面。
     const anyStageRe=new RegExp(Object.values(STAGES).map(x=>'(?:'+x.re.source+')').join('|'),'i');
     const previewHits=hits(anyStageRe).filter(rightPreview);
-    const previewMatch=previewHits.some(h=>stage.re.test(h.t));
-    const otherPreview=previewHits.some(h=>!stage.re.test(h.t));
+    const previewMatch=previewHits.some(h=>stage.re.test(h.t)&&stageFitsWorld(h.t,chosenWorld()));
+    const otherPreview=previewHits.some(h=>!stage.re.test(h.t)||!stageFitsWorld(h.t,chosenWorld()));
     // 如果右邊明顯顯示另一個副本，即使左邊的卡片有「已選」樣式也不信任。
     const confirmed=(selectedStage(row.el)||stageClickedAt>0)&&
       (previewMatch||(!otherPreview&&selectedStage(row.el)));

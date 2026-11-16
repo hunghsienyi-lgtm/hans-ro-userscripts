@@ -10,7 +10,7 @@
 | 斐揚森林：首次 1:00、之後每分鐘採集 | 1.9.2 | [HANS_Forest_Magnet_Loot.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Forest_Magnet_Loot.user.js) |
 | **開局巡走／2、3、6 分鐘與之後每 2 分鐘找磁鐵／Boss 繼續採集／Lv120 免翻牌**（覆蓋原文字重進腳本） | **2.1.0** | [HANS_Payon_Auto_Reenter.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Payon_Auto_Reenter.user.js) |
 | **三分鐘刷卡專用巡走**：走 30 秒、返點站打 30 秒、Lv30 停止亂走、3:00 磁鐵 | **1.0.3** | [HANS_ThreeMinute_Magnet_Patrol.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_ThreeMinute_Magnet_Patrol.user.js) |
-| **選關＋戰利品整合版（右下角）**：小地圖下精簡掉落即時記錄、3 分鐘磁鐵協調、選關、Discord、場次 CSV | **0.7.4** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
+| **選關＋戰利品整合版（右下角）**：每場重進下滾10次＋精簡掉落即時記錄、3 分鐘磁鐵協調、選關、Discord、場次 CSV | **0.7.6** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
 
 **2026-11-16 起，選關與戰利品已整合為同一支腳本。** 請在 Tampermonkey 將戰利品更新到 v0.7.4；原『文字重進』已更新改為 v2.1.0 的獨立巡走／磁鐵腳本，不再負責重進，自動重進改由右下角戰利品面板內的「重進」開關與關卡選單控制（不再顯示右上角固定視窗）。其餘巫師選技及森林採集維持獨立。安裝前先停用重複用途舊版腳本。後續更新時保留檔名與網址，增加腳本 `@version`，上傳覆寫到 `main`，Tampermonkey 依設定定期檢查 `@updateURL` 並取得 `@downloadURL`。更新頻率依瀏覽器與 Tampermonkey 設定而異；如需即時更新，可在 Tampermonkey 手動檢查更新。
 
@@ -105,3 +105,10 @@ HANS 在高怪量／高難度時可能顯示「◆ 高難度提醒」，內容�
 - **Lv30 時優先返點、不再隨機巡走**。為免漏掉最後一張技能卡，巫師選技 v1.22 仍選 Lv30 那張；從 Lv31 升級畫面才由巡走腳本按「之後不再翻牌」。固定磁鐵搜尋屬明確例外，不是任意走動。
 - **3:00 第二輪磁鐵保留**；只有第二輪完成且真正返回原點才發送短場完成訊號，右下角 3分鐘捨棄重進仍負責下一輪。
 - 升級畫面會暫停小地圖繪製：v1.0.3 優先檢查 Lv30／Lv31，避免因座標 950ms 未更新而漏過關鍵事件。更新後仍需 HANS 遊戲內實測；建議先檢查 Lv30 最後卡片與 3:00 第二輪磁鐵。
+
+## v0.7.6：重進後每場下滾縮放
+
+- 原本僅在點擊「前往野外」或高難度提醒「入場」時安排滾輪；若 HANS 換場流程漏掉按鈕訊號，後續回合可能沒有縮放。
+- 新版增加**戰鬥計時歸零時的實際新局偵測**，每局最多補排一次下滾，預設下滾 10 次；保留手動／自動入場原有排程與跨頁重新整理恢復。
+- 只有自動重進開啟或本次已明確入場有待縮放任務時啟動；排除升級選卡、高難度確認、主城、暫停和結算畫面。升級選卡暫時蓋住畫面會短暫等待，最多 25 秒，不會把剩餘滾輪直接丟掉。
+- Boss 倒數的計時變化不視為新局，以免打王時突然再次下滾。模擬連續短場重進三次各觸發一次排程；**瀏覽器合成 WheelEvent 是否改變 HANS 內視角仍須現場驗證**。

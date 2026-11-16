@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 戰利品全紀錄｜金色通知＋每場總表
 // @namespace    ro-local-loot-journal
-// @version      0.5.2
-// @description  HANS 專用：記錄可辨識掉落；傳說（金色）即時通知；每場結算推送總表；不操作遊戲。
+// @version      0.6.0
+// @description  HANS 選關＋戰利品整合版：讀取進場難度、結算縮圖與戰績；確認封存才自動返回；傳說通知、場次 CSV。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -23,8 +23,11 @@
   const SETTINGS_KEY = 'ro-loot-journal-v04-settings';
   const OUTBOX_KEY = 'ro-loot-journal-discord-v05-outbox'; // 不繼承 v0.4 尚未寄出的逐件推播。
   const RUN_KEY = 'ro-loot-journal-v05-current-run';
+  const HISTORY_KEY = 'hans-stage-loot-run-history-v06';
+  const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
+  const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.5.2';
+  const VERSION = '0.6.0';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -49,11 +52,14 @@
   if (!Array.isArray(outbox)) outbox=[];
   let currentRun=jsonRead(RUN_KEY,null);
   if (!currentRun || typeof currentRun!=='object' || !currentRun.id || !['active','settled'].includes(currentRun.phase)) currentRun=null;
-  let resultSeenAt=0;
+  let resultSeenAt=0, resultStableSince=0, resultFingerprint='';
+  let runHistory=jsonRead(HISTORY_KEY,[]);
+  if(!Array.isArray(runHistory))runHistory=[];
+  let pendingDifficulty=jsonRead(DIFFICULTY_KEY,null);
   let lastSummaryText='';
   let sending=false, nextAllowedAt=0, lastStatus='等待掉寶', lastDiagnostic='尚未掃描',lastPopupText='',lastRecord=null;
   let popupWasVisible=false, previousPopupRoot=null, episodeSeen=new Set(), lastCaptureKey='';
-  let summaryWasVisible=false, summarySeen=new Set(), scanQueued=false, userInitiatedTest=false;
+  let summaryWasVisible=false, summarySeen=new Set(), summaryDropSeen=new Set(), scanQueued=false, userInitiatedTest=false;
   let ui, countEl, stateEl, recentEl, discordEl, menuEl;
 
   const rarityWords = '(?:優良|精良|優秀|高級|普通|稀有|史詩|傳說|神話|uncommon|common|rare|epic|legendary|mythic|fine|good)';
@@ -74,8 +80,9 @@
   function saveRun(){saveJSON(RUN_KEY,currentRun);}
   function beginRun(reason){
     currentRun={id:`run-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
-      startedAt:nowISO(),phase:'active',summaryQueued:false,reason};
-    resultSeenAt=0;saveRun();updateUI();return currentRun;
+      startedAt:nowISO(),phase:'active',summaryQueued:false,reason,
+      difficulty:pendingDifficulty&&typeof pendingDifficulty==='object'?{...pendingDifficulty}:null};
+    resultSeenAt=0;resultStableSince=0;resultFingerprint='';saveRun();updateUI();return currentRun;
   }
   function ensureRun(){
     if(!currentRun || currentRun.phase==='settled')return beginRun('首次取得／下一局');
@@ -203,12 +210,126 @@
     episodeSeen.add(key);lastCaptureKey=key;
     addRecord(data);
   }
+  // 精簡掉落可能沒有彈窗；結算縮圖記錄「看得到的數量」，無文字時不臆測品質或名稱。
+  // 取最小包含合理數量圖片的區塊，避免將整頁商店／人物畫像一起計算。
+  function resultSection(headingRe){
+    const headings=[...document.querySelectorAll('h1,h2,h3,h4,h5,div,span,p')].filter(el=>
+      visible(el)&&el.childElementCount===0&&headingRe.test(label(el)));
+    const heading=headings[0];
+    if(!heading)return {found:false,icons:[],names:[],qualities:[]};
+    for(let box=heading.parentElement,depth=0;box&&depth<5;box=box.parentElement,depth++){
+      let icons=[...box.querySelectorAll('img')].filter(el=>visible(el)&&!el.closest('#'+UI_ID));
+      if(!icons.length){
+        // 有些 HANS 圖示以 background-image 而非 img 呈現。
+        icons=[...box.querySelectorAll('[style*="background-image"],[data-item-id],[data-card-id]')]
+          .filter(el=>visible(el)&&!el.closest('#'+UI_ID));
+      }
+      if(icons.length>0&&icons.length<=50){
+        return {found:true,
+          icons:icons.map(el=>el.getAttribute('src')||el.getAttribute('style')||el.getAttribute('data-item-id')||el.outerHTML.slice(0,120)),
+          names:icons.map(el=>norm(el.getAttribute('alt')||el.getAttribute('title')||el.getAttribute('aria-label')||el.closest('[title]')?.getAttribute('title')||
+            el.dataset?.itemName||el.dataset?.cardName||el.closest('[data-item-name]')?.getAttribute('data-item-name')||'')),
+          qualities:icons.map(el=>norm(el.getAttribute('data-rarity')||el.closest('[data-rarity]')?.getAttribute('data-rarity')||''))};
+      }
+    }
+    return {found:true,icons:[],names:[],qualities:[]};
+  }
+  function scanSummaryDrops(){
+    if(!settings.running||!resultVisible())return;
+    const section=resultSection(/^(?:獲得的掉落|獲得的戰利品|Obtained drops|Obtained loot)$/i);
+    if(!section.found)return;
+    if(!summaryDropSeen)summaryDropSeen=new Set();
+    for(let i=0;i<section.icons.length;i++){
+      const name=section.names[i];
+      if(!name||/^(?:icon|item|loot|reward|img|sprite|圖示|掉落|裝備)$/i.test(name))continue;
+      // 圖片上有「明確名稱」才記為獨立戰利品；避免把未知圖示記成假金裝。
+      const uniq=`${i}:${section.icons[i]}:${name}`;
+      if(summaryDropSeen.has(uniq))continue;
+      summaryDropSeen.add(uniq);
+      const previous=runRecords().filter(x=>x.name===name&&x.origin==='掉落彈窗').length;
+      const nowInSummary=[...summaryDropSeen].filter(x=>x.endsWith(':'+name)).length;
+      if(nowInSummary<=previous)continue;
+      const rawQuality=section.qualities[i]||'';
+      const rarity=/傳說|legendary/i.test(rawQuality)?'傳說':/史詩|epic/i.test(rawQuality)?'史詩':
+        /稀有|rare/i.test(rawQuality)?'稀有':'';
+      addRecord({type:'其他',name,rarity,tier:null,baseStats:[],attributes:[],
+        rawText:`結算掉落縮圖 ${i+1}：${name}；品質 ${rawQuality||'未顯示'}`,
+        origin:'結算掉落縮圖（具名稱但種類未確認）'});
+    }
+  }
+  function extractRunStats(){
+    if(!resultVisible())return {};
+    const text=norm(String(document.body?.innerText||'').slice(0,12000));
+    const number=re=>{const m=text.match(re);return m?Number(m[1].replace(/,/g,'')):null;};
+    return {
+      duration:(text.match(/(?:時間|存活時間)\s*(\d{1,2}:\d{2})/)||[])[1]||null,
+      level:number(/本局等級\s*(\d+)/),kills:number(/怪物\s*([\d,]+)/),
+      bosses:number(/頭目\s*(\d+)/),baseExp:number(/Base\s*EXP\s*:\s*\+?([\d,]+)/i),
+      jobExp:number(/Job\s*EXP\s*:\s*\+?([\d,]+)/i),
+      survived:/你活下來了|你存活下來了|You survived/i.test(text)?true:
+        /你倒下了|You died|Game Over/i.test(text)?false:null
+    };
+  }
+  function summarySnapshot(){
+    const drops=resultSection(/^(?:獲得的掉落|獲得的戰利品|Obtained drops|Obtained loot)$/i);
+    const cards=resultSection(/^(?:獲得的卡片|Cards obtained|Obtained cards)$/i);
+    const stats=extractRunStats();
+    return {hasDropSection:drops.found,hasCardSection:cards.found,
+      dropIcons:drops.icons.length,cardIcons:cards.icons.length,
+      dropNames:drops.names,cardNames:cards.names,stats,
+      fingerprint:JSON.stringify([drops.icons,drops.names,cards.icons,cards.names,stats])};
+  }
+  function captureDifficulty(stageId){
+    const go=[...document.querySelectorAll('button,[role="button"]')].find(el=>visible(el)&&
+      /^(?:前往野外[！!]?|GoToField|EnterTheField)$/i.test(label(el).replace(/\s/g,'')));
+    if(!go)return null;
+    let modal=null;
+    for(let p=go.parentElement,i=0;p&&i<10;p=p.parentElement,i++){
+      const t=String(p.innerText||'');
+      if(/敵人數量/.test(t)&&/敵人傷害/.test(t)&&/裝備/.test(t)){modal=p;break;}
+    }
+    if(!modal)return null;
+    const text=norm(modal.innerText);
+    const pct=x=>{const m=text.match(new RegExp(x+'\\s*([\\d.,]+)\\s*%','i'));return m?Number(m[1].replace(',','.')):null;};
+    const num=x=>{const m=text.match(new RegExp(x+'\\s*(?:×|x)?\\s*([\\d.,]+)','i'));return m?Number(m[1].replace(',','.')):null;};
+    const d={capturedAt:nowISO(),stage:stageId==='forest'?'斐揚森林':stageId==='cave'?'斐揚洞穴':pendingDifficulty?.stage||null,
+      enemyCount:pct('敵人數量'),enemyDamage:pct('敵人傷害'),enemyHp:pct('敵人\\s*HP'),
+      enemySpeed:pct('敵人速度'),eventCount:pct('事件數量'),stageLevel:num('關卡等級\\s*Lv\\.?'),
+      dropMultiplier:num('掉寶'),equipmentMultiplier:num('裝備'),legendaryPct:pct('傳說率')};
+    pendingDifficulty=d;saveJSON(DIFFICULTY_KEY,d);
+    return d;
+  }
+  function summarizeResultsForExport(run){
+    const items=records.filter(r=>r.runId===run.id);
+    return {...run,recorded:items.length,goldRecorded:items.filter(isGold).length,
+      equipmentRecorded:items.filter(r=>r.type==='裝備').length,
+      cardsRecorded:items.filter(r=>r.type==='卡片').length};
+  }
+  function exportRuns(){
+    const headers=['場次','開始時間','結算時間','地圖','敵人數量%','敵人傷害%','敵人HP%','敵人速度%','事件數量%',
+      '關卡Lv','掉寶倍率','裝備倍率','傳說率%','存活時間','擊殺怪物','頭目','局內等級',
+      '結算掉落圖示','結算卡片圖示','紀錄裝備','紀錄卡片','已辨識金裝','總紀錄','警告'];
+    const f=v=>{let s=String(v??'');if(/^\s*[=+@\-]/.test(s))s="'"+s;return '"'+s.replace(/"/g,'""')+'"';};
+    const rows=runHistory.map(r=>[r.id,r.startedAt,r.settledAt,r.difficulty?.stage,
+      r.difficulty?.enemyCount,r.difficulty?.enemyDamage,r.difficulty?.enemyHp,r.difficulty?.enemySpeed,
+      r.difficulty?.eventCount,r.difficulty?.stageLevel,r.difficulty?.dropMultiplier,
+      r.difficulty?.equipmentMultiplier,r.difficulty?.legendaryPct,
+      r.summaryObserved?.stats?.duration,r.summaryObserved?.stats?.kills,r.summaryObserved?.stats?.bosses,
+      r.summaryObserved?.stats?.level,r.summaryObserved?.dropIcons,r.summaryObserved?.cardIcons,
+      r.equipmentRecorded,r.cardsRecorded,r.goldRecorded,r.recorded,r.captureWarning]);
+    const body='\ufeff'+[headers,...rows].map(row=>row.map(f).join(',')).join('\r\n');
+    const a=document.createElement('a'),u=URL.createObjectURL(new Blob([body],{type:'text/csv;charset=utf-8'}));
+    a.href=u;a.download='HANS_關卡強度與戰利品_場次統計_'+new Date().toISOString().slice(0,10)+'.csv';
+    document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),5000);
+    status('已匯出 '+runHistory.length+' 場關卡與戰利品統計');
+  }
+
   // 結算畫面：卡片若只顯示圖示，嘗試讀取 alt/title；取不到名稱只標記未辨識，不造假。
   function scanSummaryCards(){
     if(!settings.running)return;
     const allText=String(document.body?.innerText||'');
-    const resultVisible=/你存活下來了|You survived|Run Results|獲得的戰利品/i.test(allText) && /獲得的卡片|Cards obtained|Obtained cards/i.test(allText);
-    if(!resultVisible){summaryWasVisible=false;summarySeen.clear();return;}
+    const resultVisible=/你活下來了|你存活下來了|你倒下了|You survived|You died|Run Results|獲得的掉落|獲得的戰利品/i.test(allText) && /獲得的卡片|Cards obtained|Obtained cards/i.test(allText);
+    if(!resultVisible){summaryWasVisible=false;summarySeen.clear();summaryDropSeen.clear();return;}
     if(!summaryWasVisible){summaryWasVisible=true;summarySeen.clear();}
     const labels=[...document.querySelectorAll('h1,h2,h3,h4,div,span,p')]
       .filter(el=>visible(el)&&/^(?:獲得的卡片|Cards obtained|Obtained cards)$/i.test(label(el)));
@@ -243,7 +364,7 @@
   // 以「你存活下來了」+「返回角色」辨識結算（含常見英文字樣），不會因主城出現背包而誤判。
   function resultVisible(){
     const t=String(document.body?.innerText||'');
-    return /你存活下來了|你倒下了|You survived|You died|Run Results|Game Over|戰鬥結算|本局傷害/i.test(t)
+    return /你活下來了|你存活下來了|你倒下了|You survived|You died|Run Results|Game Over|戰鬥結算|本局傷害/i.test(t)
       && /返回[角腳]色|回到角色|Back to character|Return to character/i.test(t);
   }
   function recordLine(rec,index){
@@ -270,7 +391,10 @@
       embeds:[{title:`📋 本場戰利品總表${parts.length>1?`（${index+1}/${parts.length}）`:''}`,
         color:0x4974bb,
         description:[`**總計 ${items.length} 件｜傳說金色 ${gold}｜裝備 ${count('裝備')}｜卡片 ${count('卡片')}｜其他 ${count('其他')}**`,
-          `開局／開始記錄：${startTime}`,part,
+          `開局／開始記錄：${startTime}`,
+          `關卡：${run.difficulty?.stage||'未確認'}｜敵量 ${run.difficulty?.enemyCount??'?'}%｜HP ${run.difficulty?.enemyHp??'?'}%｜掉寶 ×${run.difficulty?.dropMultiplier??'?'}｜裝備 ×${run.difficulty?.equipmentMultiplier??'?'}｜傳說率 ${run.difficulty?.legendaryPct??'?'}%`,
+          `結算縮圖：掉落 ${run.summaryObserved?.dropIcons??'?'}｜卡片 ${run.summaryObserved?.cardIcons??'?'}（非完整名稱／品質清單）`,
+          run.captureWarning?`⚠️ ${run.captureWarning}`:'',part,
           '※ 此表統計本場由畫面成功辨識的掉落；若道具未顯示文字或腳本未運作，無法補回。'
         ].join('\n\n').slice(0,3900),
         footer:{text:`RO Survivors · ${run.id} · 共 ${parts.length} 段`},timestamp:run.settledAt||nowISO()}]
@@ -278,33 +402,63 @@
   }
   function finishRun(reason){
     if(!settings.running || !currentRun || currentRun.phase!=='active'||currentRun.summaryQueued)return;
-    // 最後再掃一次結算卡片，先收齊卡片縮圖再封存本場。
-    scanSummaryCards();
+    // 封存前再掃一遍結算縮圖；未明確顯示品質時不猜是金裝。
+    scanSummaryCards();scanSummaryDrops();
+    currentRun.summaryObserved={...summarySnapshot(),fingerprint:undefined};
     currentRun.phase='settled';currentRun.settledAt=nowISO();currentRun.summaryQueued=true;
     saveRun();
+    runHistory.push(summarizeResultsForExport(currentRun));saveJSON(HISTORY_KEY,runHistory);
     const payloads=runSummaryPayloads(currentRun);
     if(settings.notify)payloads.forEach((payload,i)=>queueDiscordPayload(payload,`本場總表 ${i+1}/${payloads.length}`));
-    lastSummaryText=`已結算 ${runRecords().length} 件（${reason}）`;
+    lastSummaryText=`已結算：可讀紀錄 ${runRecords().length} 件，掉落縮圖 ${currentRun.summaryObserved?.dropIcons??'?'}、卡片縮圖 ${currentRun.summaryObserved?.cardIcons??'?'}（${reason}）`;
     status(settings.notify?`${lastSummaryText}，已加入 DC 待送`:`${lastSummaryText}，Discord 已關閉`);
     updateUI();
   }
   function checkResult(){
     if(!settings.running)return;
-    if(!resultVisible()){resultSeenAt=0;return;}
-    scanSummaryCards();
-    if(!resultSeenAt)resultSeenAt=Date.now();
-    if(Date.now()-resultSeenAt>900)finishRun('偵測結算畫面');
+    if(!resultVisible()){
+      resultSeenAt=0;resultStableSince=0;resultFingerprint='';return;
+    }
+    if(!currentRun)ensureRun();
+    if(currentRun?.phase==='settled')return;
+    const now=Date.now();
+    if(!resultSeenAt)resultSeenAt=now;
+    scanSummaryCards();scanSummaryDrops();
+    const snap=summarySnapshot();
+    lastDiagnostic=`結算辨識：掉落縮圖 ${snap.dropIcons}、卡片縮圖 ${snap.cardIcons}；掉落區 ${snap.hasDropSection?'有':'無'}、卡片區 ${snap.hasCardSection?'有':'無'}；${now-resultSeenAt}ms`;
+    if(snap.fingerprint!==resultFingerprint){resultFingerprint=snap.fingerprint;resultStableSince=now;}
+    if(currentRun)currentRun.summaryObserved={...snap,fingerprint:undefined};
+    const both=snap.hasDropSection&&snap.hasCardSection;
+    if(now-resultSeenAt>=RESULT_MIN_MS&&both&&now-resultStableSince>=RESULT_STABLE_MS){
+      if(currentRun&&(!snap.dropIcons||!snap.cardIcons))
+        currentRun.captureWarning='某類縮圖未讀取到：可能沒有掉落，或圖示不是 img，數量請核對';
+      finishRun('結算縮圖與戰績已穩定');
+    }else if(now-resultSeenAt>=RESULT_MAX_MS){
+      if(currentRun)currentRun.captureWarning=both?'結算內容持續變動，逾時保底封存':'結算區塊未完整辨識，逾時保底封存';
+      finishRun('結算等待逾時');
+    }else status('等待結算資料穩定，暫不返回角色');
   }
+  // 「選關」與「戰利品」現在位於同一使用者腳本，共用可離場旗標。
+  const stageLootBridge={
+    captureDifficulty(stageId){return captureDifficulty(stageId);},
+    readyToLeave(){
+      if(!settings.running){status('紀錄功能已暫停，為防漏記不自動返回角色');return false;}
+      if(!resultVisible())return false;
+      checkResult();
+      return currentRun?.phase==='settled'&&currentRun.summaryQueued===true;
+    }
+  };
   function beforeTransition(evt){
     const btn=evt.target?.closest?.('button,[role="button"]');
     if(!btn || !visible(btn))return;
     const name=label(btn).replace(/\s/g,'');
     if(/^(?:前往野外[！!]?|GoToField|EnterTheField)$/i.test(name)&&evt.type==='click'&&settings.running){
       // 只在確認重新進場時開始新局；不影響原有選關腳本。
+      captureDifficulty(null);
       beginRun('前往野外');
     }
     if(/^(?:返回[角腳]色|回到角色|ReturnToCharacter|BackToCharacter)$/i.test(name)&&resultVisible()){
-      scanSummaryCards();finishRun('按下返回角色');
+      checkResult();
     }
   }
   function queueScan(){if(scanQueued||!settings.running)return;scanQueued=true;queueMicrotask(()=>{
@@ -403,14 +557,14 @@
     ui.style.cssText='position:fixed;right:7px;bottom:8px;z-index:2147483647;max-width:calc(100vw - 14px);'+
       'font:12px/1.45 system-ui,sans-serif;color:#fff;background:#203452f0;border:1px solid #98b5db;'+
       'border-radius:8px;padding:6px;box-shadow:0 3px 12px #0007';
-    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 戰利品腳本 v0.5.2 已載入">📦 HANS 戰利品 <span id="roj4-count">共 0</span> ▾</button>
+    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.6.0 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> ▾</button>
       <div id="roj4-menu" hidden style="width:265px;max-width:80vw;padding-top:6px">
-        <div style="font-size:10px;opacity:.78">HANS 腳本 v0.5.2 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
+        <div style="font-size:10px;opacity:.78">HANS 整合 v0.6.0 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
         <div id="roj4-discord">Discord：開｜待送 0</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
           <button id="roj4-toggle">暫停紀錄</button><button id="roj4-notify">關閉 DC</button>
           <button id="roj4-webhook">設定 DC Webhook</button><button id="roj4-test">傳送 DC 測試</button><button id="roj4-retry">重試待送</button>
-          <button id="roj4-csv">匯出 CSV</button><button id="roj4-json">匯出 JSON</button>
+          <button id="roj4-csv">匯出 CSV</button><button id="roj4-runs">場次 CSV</button><button id="roj4-json">匯出 JSON</button>
           <button id="roj4-scan">立即掃描</button><button id="roj4-diag">複製診斷</button>
         </div>
         <div style="opacity:.8;font-size:10px;padding-top:5px">僅「傳說（金色）」逐件推播；每場結算後推送本場已辨識全部戰利品。請定期匯出備份。</div>
@@ -443,8 +597,9 @@
     };
     ui.querySelector('#roj4-retry').onclick=()=>{for(const v of outbox)v.nextTry=0;saveJSON(OUTBOX_KEY,outbox);sendNext();status('已要求重試待送訊息');};
     ui.querySelector('#roj4-csv').onclick=()=>exportData('csv');
+    ui.querySelector('#roj4-runs').onclick=exportRuns;
     ui.querySelector('#roj4-json').onclick=()=>exportData('json');
-    ui.querySelector('#roj4-scan').onclick=()=>{scanPopup('手動掃描');scanSummaryCards();status(lastDiagnostic);};
+    ui.querySelector('#roj4-scan').onclick=()=>{scanPopup('手動掃描');scanSummaryCards();scanSummaryDrops();checkResult();status(lastDiagnostic);};
     ui.querySelector('#roj4-diag').onclick=diagnostics;
     ui.querySelector('#roj4-toggle').textContent=settings.running?'暫停紀錄':'啟動紀錄';
     ui.querySelector('#roj4-notify').textContent=settings.notify?'關閉 DC':'啟用 DC';
@@ -454,7 +609,7 @@
     if(!document.documentElement){setTimeout(init,40);return;}
     new MutationObserver(changes=>{
       if(!ui&&document.body)makeUI();
-      if(changes.every(ch=>{const el=ch.target instanceof Element?ch.target:ch.target?.parentElement;return !!el?.closest?.(`#${UI_ID}`);}))return;
+      if(changes.every(ch=>{const el=ch.target instanceof Element?ch.target:ch.target?.parentElement;return !!el?.closest?.(`#${UI_ID},#hh-payon-integrated-v06`);}))return;
       queueScan();
     }).observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['class','style','hidden','aria-hidden']});
     document.addEventListener('click',beforeGet,true);
@@ -468,4 +623,343 @@
   // 預先輸出啟動標記，方便排除『腳本未注入』與『偵測不到掉寶』兩種不同問題。
   console.info('[HANS 戰利品] 腳本 v' + VERSION + ' 已載入：' + location.href);
   init();
+  // 原本自動重進功能已整合在此：同一腳本、同一封存流程。
+  (() => {
+  'use strict';
+  if (document.getElementById('hh-payon-integrated-v06')) return;
+
+  const W = {
+    back: /^(?:返回[角腳]色|回到角色|返回人物|returntocharacter|backtocharacter)$/i,
+    talk: /^(?:與|和|跟)?(?:遠征)?隊長(?:交談|談話|對話|說話)(?:(?:空格|space)|[（(](?:空格|space)[）)])?$/i,
+    forest: /^(?:斐[揚楊扬]森林|斐[揚楊扬]樹林|payonforest)$/i,
+    cave: /^(?:斐[揚楊扬](?:洞穴|洞窟)|payoncave)$/i,
+    depart: /^(?:出發|出发|出征|depart|startexpedition)$/i,
+    wilderness: /^(?:前往野外|前往野外！|前往野外!|go(?:tothe)?field|enterthefield)$/i,
+    difficulty: /^(?:難度|难度|difficulty)$/i,
+    enemyCount: /^(?:敵人數量|敌人数量|enemycount|enemyamount)$/i,
+    expedition: /^(?:遠征|远征|expedition)$/i,
+    score: /(?:裝備分數|装备分数|equipment score)/i,
+    story: /^(?:劇情|剧情|story)$/i,
+    otherStage: /^(?:普隆德拉(?:原野|地下水道|城)|失事輪|失事轮|柏伊亞[嵐島嶼屿島]+|prontera(?:fields?|sewers?|castle)|shipwreck|byalan\w*|payoncave)$/i
+  };
+  const norm = s => String(s ?? '').normalize('NFKC').replace(/[\s\u00a0\u200b-\u200d]/g,'').trim();
+  // 新增第二個關卡：保留斐揚森林，預設改成斐揚洞穴。
+  const STAGES = {
+    forest: {name:'斐揚森林',re:W.forest},
+    cave:   {name:'斐揚洞穴',re:W.cave}
+  };
+  const rct = el => el.getBoundingClientRect();
+  function shown(el,allowOffscreen=false) {
+    if (!el || !el.isConnected || el.disabled || !el.getClientRects().length) return false;
+    const r = rct(el);
+    if (r.width < 1 || r.height < 1) return false;
+    if(!allowOffscreen&&(r.right <= 0 || r.bottom <= 0 || r.left >= innerWidth || r.top >= innerHeight))return false;
+    for (let p=el, n=0; p && n<14; p=p.parentElement, n++) {
+      const s = getComputedStyle(p);
+      if (s.display==='none' || s.visibility==='hidden' || Number(s.opacity)===0) return false;
+    }
+    return true;
+  }
+  const hud = document.createElement('section');
+  hud.id = 'hh-payon-integrated-v06';
+  hud.style.cssText = 'position:fixed;top:8px;right:8px;z-index:2147483647;background:#23334bee;color:#fff;border:1px solid #a7c7ed;border-radius:7px;padding:6px 8px;font:12px/1.5 sans-serif;max-width:290px;box-shadow:0 3px 9px #0006';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.style.cssText = 'font:bold 12px sans-serif;padding:4px 8px;color:#fff;background:#5c6b82;border:1px solid #c9dbed;border-radius:5px;cursor:pointer';
+  const msg = document.createElement('div');
+  msg.style.cssText='margin-top:4px;max-width:270px;overflow-wrap:anywhere';
+  const picker = document.createElement('select');
+  picker.title = '選擇要自動進入的副本';
+  picker.setAttribute('aria-label','自動進入的副本');
+  picker.style.cssText='margin-left:6px;color:#18283b;background:#fff;border-radius:4px;padding:4px;font:12px sans-serif;max-width:120px';
+  for(const [value,stage] of Object.entries(STAGES)){
+    const option=document.createElement('option');
+    option.value=value;option.textContent=stage.name;picker.append(option);
+  }
+  try{picker.value=localStorage.getItem('hh-ro-dungeon-v16')||'cave';}catch{picker.value='cave';}
+  if(!STAGES[picker.value])picker.value='cave';
+  hud.append(btn,picker,msg);
+  document.body.append(hud);
+  let active = false, timer = null, state = '', lastAt=0, attempts={};
+  let stageClickedAt=0, beforeStageWasStory=false, departAt=0, wildernessAt=0;
+  const targetStage=()=>STAGES[picker.value]||STAGES.cave;
+  // 進圖後自動下滾：不改遊戲縮放 CSS，只送出與滑鼠滾輪方向相同的事件。
+  // +deltaY = 向下滾；遊戲本身決定是放大還是縮小視角。
+  const ZOOM_PENDING_KEY = 'hh-ro-expedition-enter-field-zoom-v18';
+  const ZOOM_STEPS = 10;
+  const ZOOM_DELTA = 160;
+  const ZOOM_STEP_INTERVAL = 400;
+  const ZOOM_READY_DELAY = 3000; // 真正顯示遊戲畫面後，再等 3 秒才滾
+  const ZOOM_MAX_WAIT = 60000;
+  let pendingZoomAt = 0, zoomInProgress = false, zoomMapReadyAt = 0;
+  function readZoomPending() {
+    try {
+      const ts=Number(sessionStorage.getItem(ZOOM_PENDING_KEY));
+      if(Number.isFinite(ts) && ts>0 && Date.now()-ts < ZOOM_MAX_WAIT) return ts;
+      sessionStorage.removeItem(ZOOM_PENDING_KEY);
+    } catch {}
+    return 0;
+  }
+  pendingZoomAt=readZoomPending();
+  function queueZoom() {
+    pendingZoomAt=Date.now();
+    zoomMapReadyAt=0;
+    try{sessionStorage.setItem(ZOOM_PENDING_KEY,String(pendingZoomAt));}catch{}
+  }
+  function clearZoomPending() {
+    pendingZoomAt=0;
+    zoomMapReadyAt=0;
+    try{sessionStorage.removeItem(ZOOM_PENDING_KEY);}catch{}
+  }
+  function mapReadyForZoom() {
+    // 難度 / 遠征仍顯示時絕不能滾輪；須等副本小地圖真的出現。
+    if(difficultyOpen() || expeditionOpen() || findControl(W.back) || findControl(W.talk))return false;
+    const mini=document.querySelector('#minimap');
+    const miniCanvas=mini?.querySelector('canvas');
+    const miniCoords=document.querySelector('#minimap-coords');
+    return !!((mini && shown(mini) && (miniCanvas ? shown(miniCanvas) : false)) ||
+      (miniCoords && shown(miniCoords)));
+  }
+  function zoomCanvas() {
+    // 優先投遞至畫面中心實際最上層的遊戲元素，更接近使用者在遊戲中滾輪的事件路徑。
+    const centerElement=document.elementFromPoint(Math.floor(innerWidth*.50),Math.floor(innerHeight*.50));
+    if(centerElement && !hud.contains(centerElement) && !centerElement.closest('#minimap'))return centerElement;
+    // 若中心位置被小地圖或 HUD 遮住，才退回主畫布。
+    const choices=[...document.querySelectorAll('canvas')].filter(el =>
+      !el.closest('#minimap') && !hud.contains(el) && shown(el));
+    choices.sort((a,b)=>{
+      const ar=rct(a),br=rct(b);return br.width*br.height-ar.width*ar.height;
+    });
+    if(choices.length)return choices[0];
+    // 2D / DOM 遊戲備援：事件會往上冒泡至 document/window。
+    for(const selector of ['#game-canvas','#game-container','#game','#world','#game-view']){
+      const el=document.querySelector(selector);
+      if(el && shown(el))return el;
+    }
+    const el=document.elementFromPoint(Math.floor(innerWidth*.50),Math.floor(innerHeight*.55));
+    return el && !hud.contains(el) ? el : document.body;
+  }
+  function emitDownWheel(target){
+    const r=rct(target);
+    const x=Math.max(1,Math.min(innerWidth-2,Math.round(r.left+r.width/2)));
+    const y=Math.max(1,Math.min(innerHeight-2,Math.round(r.top+r.height/2)));
+    target.dispatchEvent(new WheelEvent('wheel', {
+      bubbles:true,cancelable:true,composed:true,view:window,
+      deltaX:0,deltaY:ZOOM_DELTA,deltaZ:0,deltaMode:0,clientX:x,clientY:y
+    }));
+  }
+  function checkEntryZoom() {
+    if(!pendingZoomAt || zoomInProgress)return;
+    if(Date.now()-pendingZoomAt>ZOOM_MAX_WAIT){
+      clearZoomPending();tell('進圖逾時，未執行滾輪');return;
+    }
+    // 務必等地圖連續保持可見 3 秒，避免地圖剛載入時遊戲尚未註冊滾輪事件。
+    if(document.hidden || !mapReadyForZoom()) {zoomMapReadyAt=0;return;}
+    if(!zoomMapReadyAt)zoomMapReadyAt=Date.now();
+    if(Date.now()-zoomMapReadyAt<ZOOM_READY_DELAY || Date.now()-pendingZoomAt<ZOOM_READY_DELAY)return;
+    zoomInProgress=true;
+    clearZoomPending(); // 先消耗此次任務，避免一局重複縮放。
+    let count=0;
+    tell(`已進地圖，開始向下滾輪 ${ZOOM_STEPS} 次`);
+    function step(){
+      if(document.hidden || !mapReadyForZoom()){
+        zoomInProgress=false;
+        tell('滾輪中止：遊戲地圖暫時不可見');return;
+      }
+      const target=zoomCanvas();
+      try{emitDownWheel(target);}catch(e){
+        console.warn('[HANS 整合選關] 滾輪事件發送失敗',e);
+        zoomInProgress=false;tell('滾輪事件發送失敗');return;
+      }
+      count++;
+      tell(`進圖下滾：${count}/${ZOOM_STEPS}（需遊戲實測確認視角變化）`);
+      if(count < ZOOM_STEPS){setTimeout(step,ZOOM_STEP_INTERVAL);}
+      else{zoomInProgress=false;tell(`已送出 ${ZOOM_STEPS} 次下滾事件，等待下一場結算`);}
+    }
+    step();
+  }
+  // 即使出發後整頁重新載入，也能以 sessionStorage 恢復這一次的視角調整。
+  setInterval(checkEntryZoom,350);
+  function tell(s) {if (msg.textContent!==s) {msg.textContent=s;console.info('[HANS 整合選關]',s);}}
+  function phase(p) {
+    if (state===p) return;
+    state=p; attempts={}; lastAt=0;stageClickedAt=0;beforeStageWasStory=false;departAt=0;wildernessAt=0;
+  }
+  function enable(value) {
+    active=value;clearInterval(timer);phase('');
+    btn.textContent=`重進：${active?'開':'關'}（Shift+5）`;
+    btn.style.background=active?'#146f4c':'#5c6b82';
+    tell(active?`已開啟，目標：${targetStage().name}`:'已關閉');
+    if(active){timer=setInterval(tick,450);tick();}
+  }
+  btn.addEventListener('click',()=>enable(!active));
+  picker.addEventListener('change',()=>{
+    if(!STAGES[picker.value])return;
+    try{localStorage.setItem('hh-ro-dungeon-v16',picker.value);}catch{}
+    phase('');tell(`目標已切換：${targetStage().name}（${active?'自動重進中':'尚未開啟'}）`);
+  });
+  window.addEventListener('keydown',e=>{
+    if(e.code!=='Digit5'||!e.shiftKey||e.altKey||e.ctrlKey||e.metaKey||e.repeat||e.isComposing)return;
+    if(e.composedPath().some(x=>x?.isContentEditable||x?.matches?.('input,textarea,select,[role="textbox"]')))return;
+    e.preventDefault();e.stopImmediatePropagation();enable(!active);
+  },true);
+
+  // The text may be a plain text node inside a clickable card (not a <button>).
+  // Collect actual visible text rects rather than matching an entire panel's text.
+  function hits(re,allowOffscreen=false) {
+    const out=[];
+    const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
+    let node;
+    while((node=walker.nextNode())) {
+      const t=norm(node.nodeValue);
+      if(!t||t.length>100||!re.test(t))continue;
+      const el=node.parentElement;
+      if(!el||hud.contains(el)||el.closest('script,style,noscript')||!shown(el,allowOffscreen))continue;
+      const rng=document.createRange();rng.selectNodeContents(node);
+      const r=rng.getBoundingClientRect();
+      if(r.width>0 && r.height>0)out.push({el,r,t});
+    }
+    return out;
+  }
+  function findControl(re) {
+    const nodes=document.querySelectorAll('button,[role="button"],input[type="button"],input[type="submit"],a');
+    for(const el of nodes) {
+      if(hud.contains(el)||!shown(el))continue;
+      if([el.getAttribute('aria-label'),el.getAttribute('title'),el.value,el.textContent]
+          .some(t=>t&&re.test(norm(t))))return el;
+    }
+    // Some controls use a <div> with a text node; use the smallest clickable ancestor.
+    for(const h of hits(re)) {
+      const candidate=h.el.closest('button,[role="button"],a,[onclick],[tabindex]')||h.el;
+      if(shown(candidate))return candidate;
+    }
+    return null;
+  }
+  function action(key,el,label,max=3,wait=1100,allowOffscreen=false) {
+    if(!el||!shown(el,allowOffscreen)||Date.now()-lastAt<wait)return false;
+    if((attempts[key]||0)>=max){tell(`「${label}」已嘗試 ${max} 次，停止重試`);return false;}
+    attempts[key]=(attempts[key]||0)+1;
+    lastAt=Date.now();
+    el.click();
+    tell(`已按「${label}」第 ${attempts[key]} 次`);
+    return true;
+  }
+  function left(h) {return h.r.left+h.r.width/2<innerWidth*.34;}
+  function rightPreview(h) {
+    return h.r.left+h.r.width/2>innerWidth*.35 && h.r.top<innerHeight*.63;
+  }
+  function storyTextIsVisible() {
+    // The story button in this screen is disabled; a clickable-button lookup
+    // would intentionally exclude it. Still read its visible text.
+    return hits(W.story).length > 0 || [...document.querySelectorAll('button,[role="button"]')]
+      .some(el => el.getClientRects().length > 0 && W.story.test(norm(el.textContent)));
+  }
+  function expeditionOpen() {
+    // CRITICAL: detect the stage LIST, not the "出發" button. On 普隆德拉城
+    // the button is labelled "劇情", so there may be no 出發 at all.
+    const payonLeft=[...hits(W.forest),...hits(W.cave)].filter(left);
+    const otherLeft=hits(W.otherStage).filter(left);
+    const title=hits(W.expedition).some(h=>h.r.top<innerHeight*.25 && left(h));
+    const score=hits(W.score).length>0 || [...document.querySelectorAll('body *')]
+      .some(el=>el.children.length===0 && shown(el) && /裝備分數/.test(el.textContent||'') && (el.textContent||'').length<70);
+    return payonLeft.length>0 && (otherLeft.length>0 || title || score);
+  }
+  function stageTarget() {
+    // 選單可能要捲動，允許先找到位於捲動容器可視範圍外的洞穴項目。
+    const hit=hits(targetStage().re,true).filter(left).sort((a,b)=>a.r.top-b.r.top)[0];
+    if(!hit)return null;
+    // Choose a whole stage row by visible size, regardless of CSS class names.
+    let best=hit.el, score=-1;
+    for(let p=hit.el,i=0;p&&p!==document.body&&i<9;p=p.parentElement,i++){
+      if(!shown(p,true))continue;
+      const r=rct(p), cx=r.left+r.width/2;
+      if(cx>=innerWidth*.47 || r.width>innerWidth*.48 || r.height>160)break;
+      let value=0;
+      if(r.width>=140&&r.width<=innerWidth*.46&&r.height>=42&&r.height<=140)value=5+r.width/100;
+      if(p.matches('button,[role="button"],a,[data-stage],[data-expedition],li'))value+=7;
+      if(value>score){score=value;best=p;}
+    }
+    return best;
+  }
+  function selectedStage(row){
+    for(let p=row,i=0;p&&i<4;p=p.parentElement,i++) {
+      const cls=typeof p.className==='string'?p.className:'';
+      if(p.getAttribute('aria-selected')==='true'||p.getAttribute('data-selected')==='true'||
+        /(?:^|[\s_-])(?:selected|active|current|chosen)(?:$|[\s_-])/i.test(cls))return true;
+    }
+    return false;
+  }
+  function handleExpedition(){
+    phase('expedition');
+    const stage=targetStage();
+    const row=stageTarget();
+    if(!row){tell(`遠征已開，但找不到「${stage.name}」項目`);return;}
+    const previewMatch=hits(stage.re).some(rightPreview);
+    const otherPreview=Object.entries(STAGES).some(([id,s])=>id!==picker.value && hits(s.re).some(rightPreview));
+    // 如果右邊明顯顯示另一個副本，即使左邊的卡片有「已選」樣式也不信任。
+    const confirmed=previewMatch || (!otherPreview && selectedStage(row));
+    const depart=findControl(W.depart);
+    if(confirmed && depart){
+      if(departAt && Date.now()-departAt<10000){tell('已按出發，等待難度視窗');return;}
+      if(action('depart',depart,'出發',2,1100))departAt=Date.now();
+      return;
+    }
+    if(confirmed&&!depart){tell(`已選${stage.name}，等待「出發」按鈕`);return;}
+    if(stageClickedAt && Date.now()-stageClickedAt<1700){tell(`已按${stage.name}，等待右側切換`);return;}
+    // 只有看不到任何其他目標副本的預覽時，才容許「劇情」變成「出發」當作輔助確認。
+    if(stageClickedAt && beforeStageWasStory && depart && !otherPreview){
+      if(action('depart',depart,'出發（劇情已變更）',1,1100))departAt=Date.now();
+      return;
+    }
+    if((attempts.stage||0)>=3){tell(`選了${stage.name}仍無法確認切換；停止重試，避免按錯副本`);return;}
+    beforeStageWasStory=beforeStageWasStory||storyTextIsVisible();
+    // 左邊清單若尚未捲到洞穴，先讓項目進入可視範圍。
+    try{row.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});}catch{}
+    if(action('stage',row,stage.name,3,1350,true))stageClickedAt=Date.now();
+  }
+  // The difficulty dialog is a *new* stage after 出發. Its confirm button is
+  // 「前往野外」. Detect it BEFORE the expedition list (which may remain in DOM
+  // behind the modal); never move the sliders or click 「取消」.
+  function difficultyOpen() {
+    return !!findControl(W.wilderness) ||
+      (hits(W.difficulty).length > 0 && hits(W.enemyCount).length > 0);
+  }
+  function handleDifficulty() {
+    phase('difficulty');
+    stageLootBridge.captureDifficulty(picker.value);
+    const go=findControl(W.wilderness);
+    if(!go) {tell('難度視窗已開，等待「前往野外」按鈕');return;}
+    if(wildernessAt && Date.now()-wildernessAt < 8000) {
+      tell('已按「前往野外」，等待副本載入');
+      return;
+    }
+    if((attempts.wilderness||0)>=2) {
+      tell('「前往野外」兩次仍未關閉視窗，已停止重試');
+      return;
+    }
+    // 點擊前建立待縮放旗標，避免點擊觸發整頁跳轉而丟失訊號。
+    if(go && shown(go) && Date.now()-lastAt>=1200 && (attempts.wilderness||0)<2) {
+      queueZoom();
+      if(action('wilderness',go,'前往野外',2,1200))wildernessAt=Date.now();
+      else clearZoomPending();
+    }
+  }
+  function tick() {
+    if(!active||document.hidden)return;
+    try {
+      if(difficultyOpen()){handleDifficulty();return;}
+      if(expeditionOpen()){handleExpedition();return;}
+      const back=findControl(W.back);
+      if(back){phase('result');
+        if(!stageLootBridge.readyToLeave()){tell('結算辨識與封存中，暫不返回角色');return;}
+        action('back',back,'返回角色',3,1500);return;}
+      const talk=findControl(W.talk);
+      if(talk){phase('town');action('talk',talk,'與隊長交談',4,1800);return;}
+      phase('waiting');tell(`等待結算／主城／遠征／難度視窗（目標：${targetStage().name}）`);
+    } catch(e) {tell('偵測錯誤：請截圖並回報');console.error('[HANS 整合選關]',e);}
+  }
+  window.addEventListener('pagehide',()=>clearInterval(timer));
+  enable(false);
+})();
+
 })();

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.7.8
-// @description  金色與其他戰利品一律只在每場結束後統一發 Discord 總表；保留選關、重進下滾、三分鐘刷卡及精簡掉落。
+// @version      0.8.0
+// @description  HANS 遠征一／二／三周目獨立選關，出征前核對周目；保留自動重進、滾輪、短場與戰利品。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.7.8';
+  const VERSION = '0.8.0';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -672,9 +672,9 @@
     ui.style.cssText='position:fixed;right:7px;bottom:8px;z-index:2147483647;max-width:calc(100vw - 14px);'+
       'font:12px/1.45 system-ui,sans-serif;color:#fff;background:#203452f0;border:1px solid #98b5db;'+
       'border-radius:8px;padding:6px;box-shadow:0 3px 12px #0007';
-    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.7.8 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
+    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.8.0 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
       <div id="roj4-menu" hidden style="width:265px;max-width:80vw;max-height:60vh;overflow-y:auto;padding-top:6px">
-        <div style="font-size:10px;opacity:.78">HANS 整合 v0.7.8 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
+        <div style="font-size:10px;opacity:.78">HANS 整合 v0.8.0 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
         <div id="roj4-discord">Discord：開｜待送 0</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
           <button id="roj4-toggle">暫停紀錄</button><button id="roj4-notify">關閉 DC</button>
@@ -762,41 +762,48 @@
   const norm = s => String(s ?? '').normalize('NFKC').replace(/[\s\u00a0\u200b-\u200d]/g,'').trim();
   // 遠征清單以目前遊戲畫面為準；不硬編碼未見過的關卡名稱。
   const STAGES={
-    forest:{name:'斐揚森林',re:W.forest,unlocked:true},
-    cave:{name:'斐揚洞穴',re:W.cave,unlocked:true}
+    forest:{name:'斐揚森林',re:W.forest,unlocked:true,world:1},
+    cave:{name:'斐揚洞穴',re:W.cave,unlocked:true,world:1}
   };
   const CATALOG_KEY='hh-ro-stage-catalog-v062', SELECT_KEY='hh-ro-dungeon-v16';
+  const WORLD_KEY='hh-ro-expedition-world-v080', WORLD_TARGETS_KEY='hh-ro-world-targets-v080';
+  const WORLD_NAMES={1:'一周目',2:'二周目',3:'三周目'};
+  const worldSelections=(()=>{try{const v=JSON.parse(localStorage.getItem(WORLD_TARGETS_KEY)||'{}');return v&&typeof v==='object'?v:{}}catch{return {}}})();
+  if(!worldSelections['1'])try{worldSelections['1']=localStorage.getItem(SELECT_KEY)||'cave'}catch{worldSelections['1']='cave'}
+  let initialWorld=1;try{const w=Number(localStorage.getItem(WORLD_KEY));if(WORLD_NAMES[w])initialWorld=w}catch{}
+
   const savedCatalog=(()=>{
     try{const v=JSON.parse(localStorage.getItem(CATALOG_KEY)||'[]');return Array.isArray(v)?v:[]}
     catch{return []}
   })();
   const namePattern=name=>new RegExp('^'+[...norm(name)].map(ch=>
     /[\p{L}\p{N}]/u.test(ch)?ch:'\\'+ch).join('')+'$','i');
-  function rememberStage(name,unlocked,level=''){
-    name=String(name||'').trim().replace(/[\r\n]+/g,' ');
-    if(name.length<2||name.length>45)return null;
-    const found=Object.entries(STAGES).find(([,v])=>norm(v.name)===norm(name));
-    const key=found?.[0]||'hans:'+norm(name);
-    if(!STAGES[key])STAGES[key]={name,re:namePattern(name),unlocked,level};
-    else{
-      STAGES[key].unlocked=unlocked;
-      if(level)STAGES[key].level=level;
+  const chosenWorld=()=>Number(worldPicker.value)||1;
+  function redrawStageChoices(){
+    const world=chosenWorld(),before=picker.value;
+    const entries=Object.entries(STAGES).filter(([,v])=>v.world===world);
+    const lvl=v=>Number((String(v.level||'').match(/^(\d+)/)||[])[1]||99999);
+    entries.sort((a,b)=>lvl(a[1])-lvl(b[1])||a[1].name.localeCompare(b[1].name));
+    picker.replaceChildren();
+    const blank=document.createElement('option');blank.value='';
+    blank.textContent=entries.length?'請選擇'+WORLD_NAMES[world]+'關卡':'請先掃描'+WORLD_NAMES[world];
+    picker.append(blank);
+    for(const [key,st] of entries){
+      const opt=document.createElement('option');opt.value=key;opt.disabled=st.unlocked===false;
+      opt.textContent=st.name+(st.level?' · Lv '+st.level:'')+(st.unlocked===false?'（未解鎖）':'');
+      picker.append(opt);
     }
-    const current=[...picker.options].find(o=>o.value===key);
-    const opt=current||document.createElement('option');
-    opt.value=key;opt.textContent=name+(level?' · Lv '+level:'')+(unlocked?'':'（未解鎖）');
-    opt.disabled=!unlocked;
-    if(!current)picker.appendChild(opt);
-    // 依 HANS 畫面的 Lv 起始等級排序，讓低等級舊關卡排在前面，而不是只排在斐揚之後。
-    const keep=picker.value;
-    const stageLevel=op=>{
-      const m=String(STAGES[op.value]?.level||'').match(/^(\d+)/);
-      return m?Number(m[1]):Number.POSITIVE_INFINITY;
-    };
-    const all=[...picker.options].sort((a,b)=>stageLevel(a)-stageLevel(b));
-    for(const item of all)picker.appendChild(item);
-    if(keep&&[...picker.options].some(x=>x.value===keep))picker.value=keep;
-    return key;
+    const preferred=(STAGES[before]?.world===world?before:'')||worldSelections[String(world)]||'';
+    picker.value=STAGES[preferred]?.world===world&&STAGES[preferred].unlocked!==false?preferred:'';
+  }
+  function rememberStage(name,unlocked,level='',world=1){
+    name=String(name||'').trim().replace(/[\r\n]+/g,' ');
+    if(name.length<2||name.length>45||!WORLD_NAMES[world])return null;
+    const found=Object.entries(STAGES).find(([,v])=>v.world===world&&norm(v.name)===norm(name));
+    const key=found?.[0]||'hans:w'+world+':'+norm(name);
+    if(!STAGES[key])STAGES[key]={name,re:namePattern(name),unlocked,level,world};
+    else{STAGES[key].unlocked=unlocked;if(level)STAGES[key].level=level;}
+    redrawStageChoices();return key;
   }
   const levelPattern=/\bLv\.?\s*(\d+)\s*[-–—~～]\s*(\d+)\b/i;
   // 對照實際畫面：左側每張關卡卡片有 Lv 31-40 等範圍及關卡名稱。
@@ -830,7 +837,11 @@
     return out;
   }
   const catalog={running:false,complete:false,scroll:null,steps:0,observed:new Set(),
-    searchName:'',searchSteps:0,topReadyAt:0,topConfirmed:false};
+    searchName:'',searchSteps:0,topReadyAt:0,topConfirmed:false,world:null,worldAt:0};
+  function resetCatalog(){
+    Object.assign(catalog,{running:false,complete:false,scroll:null,steps:0,observed:new Set(),
+      searchName:'',searchSteps:0,topReadyAt:0,topConfirmed:false});
+  }
   function findListScroll(rows){
     for(let p=rows[0]?.el,i=0;p&&i<14;p=p.parentElement,i++){
       const r=rct(p);
@@ -839,20 +850,20 @@
     }
     return null;
   }
-  function readStageCatalog(){
+  function readStageCatalog(world){
     const rows=stageRows();let change=false;
     for(const row of rows){
-      const k=rememberStage(row.name,row.unlocked,row.level);
+      const k=rememberStage(row.name,row.unlocked,row.level,world);
       if(k&&!catalog.observed.has(k)){catalog.observed.add(k);change=true}
     }
     if(change)try{
       localStorage.setItem(CATALOG_KEY,JSON.stringify(
-        Object.values(STAGES).map(v=>({name:v.name,unlocked:v.unlocked,level:v.level||''}))));
+        Object.values(STAGES).map(v=>({name:v.name,unlocked:v.unlocked,level:v.level||'',world:v.world}))));
     }catch{}
     if(!catalog.scroll)catalog.scroll=findListScroll(rows);
     return rows;
   }
-  function scanAllStages(){
+  function scanAllStages(world){
     if(!catalog.complete&&!catalog.running){
       catalog.running=true;catalog.steps=0;catalog.observed=new Set();
       catalog.topConfirmed=false;catalog.topReadyAt=Date.now()+450;
@@ -870,7 +881,7 @@
       if(Date.now()<catalog.topReadyAt)return;
       catalog.topConfirmed=true;
     }
-    const rows=readStageCatalog();
+    const rows=readStageCatalog(world);
     if(!el||catalog.steps>=70||el.scrollTop>=el.scrollHeight-el.clientHeight-3){
       catalog.running=false;catalog.complete=true;
       if(el)el.scrollTop=0;
@@ -883,12 +894,16 @@
     if(el.scrollTop<=before+1)catalog.steps=70;
   }
   function stageExplorerTick(){
-    if(!expeditionOpen()){
-      catalog.running=false;catalog.complete=false;catalog.scroll=null;
-      catalog.topConfirmed=false;catalog.topReadyAt=0;
-      catalog.searchSteps=0;catalog.searchName='';return;
+    if(!expeditionOpen()){resetCatalog();catalog.world=null;return;}
+    const tab=currentWorldState();
+    if(tab.available&&tab.world===null){tell('目前周目狀態不明，暫停掃描');return;}
+    const world=tab.world;
+    if(catalog.world!==world){
+      resetCatalog();catalog.world=world;catalog.worldAt=Date.now();
+      tell('開始掃描'+WORLD_NAMES[world]+'的關卡');return;
     }
-    scanAllStages();
+    if(Date.now()-catalog.worldAt<550)return;
+    scanAllStages(world);
   }
 
   const rct = el => el.getBoundingClientRect();
@@ -914,21 +929,25 @@
   btn.style.cssText = 'font:bold 12px sans-serif;padding:4px 8px;color:#fff;background:#5c6b82;border:1px solid #c9dbed;border-radius:5px;cursor:pointer';
   const msg = document.createElement('div');
   msg.style.cssText='margin-top:4px;max-width:270px;overflow-wrap:anywhere';
-  const picker = document.createElement('select');
-  picker.title = '選擇要自動進入的副本';
-  picker.setAttribute('aria-label','自動進入的副本');
-  picker.style.cssText='margin-left:6px;color:#18283b;background:#fff;border-radius:4px;padding:4px;font:12px sans-serif;max-width:120px';
-  for(const [value,stage] of Object.entries(STAGES)){
-    const option=document.createElement('option');option.value=value;
-    option.textContent=stage.name;picker.append(option);
+  const worldPicker=document.createElement('select');
+  worldPicker.title='選擇自動重進的周目';worldPicker.setAttribute('aria-label','遠征周目');
+  worldPicker.style.cssText='margin-left:5px;color:#18283b;background:white;border-radius:4px;padding:4px;font:12px sans-serif;max-width:86px';
+  for(const [key,label] of Object.entries(WORLD_NAMES)){
+    const op=document.createElement('option');op.value=key;op.textContent=label;worldPicker.append(op);
   }
+  worldPicker.value=String(initialWorld);
+  const picker=document.createElement('select');
+  picker.title='選擇此周目關卡';picker.setAttribute('aria-label','自動進入的副本');
+  picker.style.cssText='margin-left:5px;color:#18283b;background:white;border-radius:4px;padding:4px;font:12px sans-serif;max-width:150px';
   for(const item of savedCatalog){
-    if(item&&typeof item.name==='string')rememberStage(item.name,item.unlocked!==false,item.level||'');
+    if(item&&typeof item.name==='string')rememberStage(item.name,item.unlocked!==false,item.level||'',Number(item.world)||1);
   }
-  let savedTarget='cave';
-  try{savedTarget=localStorage.getItem(SELECT_KEY)||'cave';}catch{}
-  if(!STAGES[savedTarget]&&savedTarget.startsWith('hans:'))rememberStage(savedTarget.slice(5),true);
-  picker.value=STAGES[savedTarget]?savedTarget:'cave';
+  const oldTarget=worldSelections['1'];
+  if(oldTarget&&!STAGES[oldTarget]&&oldTarget.startsWith('hans:')&&!/^hans:w[123]:/.test(oldTarget)){
+    rememberStage(oldTarget.slice(5),true,'',1);
+    worldSelections['1']='hans:w1:'+norm(oldTarget.slice(5));
+  }
+  redrawStageChoices();
 
   // 控制元件必須等 shortGroup / shortHelp 都宣告後才掛載；原 v0.7.0 會因 TDZ 初始化失敗。
   // 選關與戰利品共用右下原本面板。若主面板尚未生成，重試掛載，不開第二個浮窗。
@@ -942,7 +961,8 @@
   // 實際掛載移至 shortGroup、shortHelp 建立完成後。
   let active = false, timer = null, state = '', lastAt=0, attempts={};
   let stageClickedAt=0, beforeStageWasStory=false, departAt=0, wildernessAt=0;
-  const targetStage=()=>STAGES[picker.value]||STAGES.cave;
+  const targetStage=()=>STAGES[picker.value]?.world===chosenWorld()?STAGES[picker.value]:null;
+  const targetLabel=()=>WORLD_NAMES[chosenWorld()]+'／'+(targetStage()?.name||'尚未選關');
 
   // 可選 3 分鐘短刷模式；只在本腳本的自動重進開啟時執行。
   const SHORT_PREF_KEY='hans-ro-stage-loot-short3-v070';
@@ -1011,9 +1031,9 @@
   picker.id='hans-auto-stage-picker';
   shortToggle.id='hans-short-run-toggle';
   shortGrace.id='hans-short-run-grace';
-  hud.append(btn,picker,shortGroup,shortHelp,msg);
+  hud.append(btn,worldPicker,picker,shortGroup,shortHelp,msg);
   mountStageIntoLootPanel();
-  const uiElements=[btn,picker,shortToggle,shortGrace];
+  const uiElements=[btn,worldPicker,picker,shortToggle,shortGrace];
   if(uiElements.some(el=>!hud.contains(el)) || hud.parentElement?.id!=='roj4-menu'){
     throw new Error('右下角選關／3分鐘刷卡元件未能正常掛載');
   }
@@ -1286,14 +1306,23 @@
     btn.style.background=active?'#146f4c':'#5c6b82';
     const mini=document.getElementById('roj4-stage-mini');
     if(mini)mini.textContent=`重進：${active?'開':'關'}`;
-    tell(active?`已開啟，目標：${targetStage().name}`:'已關閉');
+    tell(active?'已開啟，目標：'+targetLabel():'已關閉');
     if(active){timer=setInterval(tick,450);tick();}
   }
   btn.addEventListener('click',()=>enable(!active));
+  worldPicker.addEventListener('change',()=>{
+    try{localStorage.setItem(WORLD_KEY,worldPicker.value)}catch{}
+    redrawStageChoices();resetCatalog();catalog.world=null;phase('');
+    tell('設定 '+WORLD_NAMES[chosenWorld()]+'，請開遠征畫面掃描並選關');
+  });
   picker.addEventListener('change',()=>{
-    if(!STAGES[picker.value]||STAGES[picker.value].unlocked===false)return;
-    try{localStorage.setItem(SELECT_KEY,picker.value);}catch{}
-    phase('');tell(`目標已切換：${targetStage().name}（${active?'自動重進中':'尚未開啟'}）`);
+    const stage=targetStage();if(!stage||stage.unlocked===false)return;
+    worldSelections[String(chosenWorld())]=picker.value;
+    try{
+      localStorage.setItem(WORLD_TARGETS_KEY,JSON.stringify(worldSelections));
+      if(chosenWorld()===1)localStorage.setItem(SELECT_KEY,picker.value);
+    }catch{}
+    phase('');tell('目標已切換：'+targetLabel());
   });
   window.addEventListener('keydown',e=>{
     if(e.code!=='Digit5'||!e.shiftKey||e.altKey||e.ctrlKey||e.metaKey||e.repeat||e.isComposing)return;

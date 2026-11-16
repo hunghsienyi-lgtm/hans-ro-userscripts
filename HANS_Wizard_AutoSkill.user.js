@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 二轉巫師｜五核心自動選技＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.19
-// @description  二轉優先學暴風雪、霜凍之術與三箭，學齊再追加目標；冰凍術非核心；尋寶率寶箱優先。
+// @version      1.20
+// @description  先學齊暴風雪、霜凍之術與三箭，再優先 +目標／+衝擊；衝擊限兩個冰系核心；寶箱尋寶率優先。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
 // @run-at       document-idle
@@ -12,7 +12,7 @@
 // ==/UserScript==
 (() => {
   'use strict';
-  if (document.getElementById('hans-mage-autoskill-v119')) return;
+  if (document.getElementById('hans-mage-autoskill-v120')) return;
   const potion = [/傷害藥水|damage potion|potion of damage/i, /範圍藥水|area potion|potion of area/i];
   const label = '巫師';
   const shown = el => {
@@ -52,7 +52,40 @@
     return gain;
   }
 
-  // v1.19：二轉五核心；暴風雪 > 霜凍之術 > 三箭；「冰凍術」不是「霜凍之術」。
+
+  // HANS 二轉冰系技能的額外命中叫「衝擊」，不是「目標」。
+  // 僅暴風雪與霜凍之術適用；忽略「衝擊傷害 +30%」等百分比。
+  const impactPatterns = [
+    /(?:衝擊|冲击)(?:次數|次|數量|數)?\s*[:：]?\s*(?:\+|增加|提升|提高|額外(?:增加)?)\s*([\d一兩二三四五六七八九]+)(?![\d.%％])/gi,
+    /(?:\+|增加|多|額外(?:增加)?)\s*([\d一兩二三四五六七八九]+)(?![\d.%％])\s*(?:次|個|道|發)?\s*(?:衝擊|冲击)/gi
+  ];
+  function impactGain(card){
+    let best=0;
+    const nodes=[...card.querySelectorAll('.pk-lines li')];
+    if(!nodes.length)nodes.push(card.querySelector('.pk-lines'));
+    const parseAmount=s=>Number(s)||({一:1,兩:2,二:2,三:3,四:4,五:5,六:6,七:7,八:8,九:9})[s]||0;
+    for(const node of nodes){
+      if(!node)continue;
+      const line=node.textContent.normalize('NFKC');
+      for(const re of impactPatterns){
+        for(const match of line.matchAll(re)){
+          const count=parseAmount(match[1]);
+          if(count>0)best=Math.max(best,count);
+        }
+      }
+      const change=line.match(/(?:衝擊|冲击)(?:次數|數量|數)?\s*[:：]?\s*(\d+)\s*(?:→|->|➜)\s*(\d+)/i);
+      if(change)best=Math.max(best,Number(change[2])-Number(change[1]));
+      if(/^\s*\+\s*(?:衝擊|冲击)\s*$/.test(line))best=Math.max(best,1);
+    }
+    return Math.max(0,best);
+  }
+  function extraHitGain(card,core){
+    const target=targetGain(card);
+    const impact=core&&(core.id==='storm'||core.id==='frost')?impactGain(card):0;
+    return {amount:Math.max(target,impact),kind:impact>target?'衝擊':'目標'};
+  }
+
+  // v1.20：二轉五核心；暴風雪 > 霜凍之術 > 三箭；「冰凍術」不是「霜凍之術」。
   const coreSkills = [
     {id:'storm', label:'暴風雪', name:/暴風雪|storm\s*gust|\bblizzard\b/i,
       slot:/blizzard|storm[-_]?gust|(?:^|[_.-])storm(?:gust)?$|^stormgust$|^wizardstorm$/i},
@@ -106,7 +139,7 @@
   }
   function scoreSkill(card,info){
     const core=coreOf(card), newSkill=isNew(card), text=read(card,'.pk-lines').normalize('NFKC');
-    // v1.19：先拿缺少的五大核心技能；五核心齊全後才把 +目標列為第一優先。
+    // v1.20：先拿缺少的五大核心技能；五核心齊全後才把 +目標／+衝擊列為第一優先。
     // 即使卡片上同時寫有 +目標，只要它屬於「新技能」，仍按補技能處理。
     if(newSkill && info.full) return {score:-Infinity,reason:'技能格已滿'};
     if(newSkill){
@@ -114,8 +147,9 @@
         return {score:120000+(5-coreOrder(core))*100,reason:`先補核心：${core.label}`};
       return {score:-Infinity,reason:'非核心或重複新技能：僅保底'};
     }
-    const targets=core ? targetGain(card) : 0;
-    if(core && targets>0) return {score:100000+targets*1000+(5-coreOrder(core)),reason:`核心 +目標 ${targets}`};
+    const extra=core ? extraHitGain(card,core) : {amount:0,kind:'目標'};
+    if(core && extra.amount>0) return {score:100000+extra.amount*1000+(5-coreOrder(core)),
+      reason:`核心 +${extra.kind} ${extra.amount}：${core.label}`};
     if(core){
       const haste=/(?:急速|冷卻|cooldown|haste)/i.test(text);
       const damage=/(?:傷害|damage|dmg)/i.test(text);
@@ -135,7 +169,7 @@
     return {score:-Infinity,backup:100,reason:'其他強化保底'};
   }
   // 補技能階段：技能格尚有空位，而且能讀到仍缺少的五核心技能。
-  // 這時即使候選有核心 +目標，也先尋找「新技能卡」；找不到就先重抽整組。
+  // 這時即使候選有核心 +目標／+衝擊，也先尋找「新技能卡」；找不到就先重抽整組。
   // 滿格（含被保底非核心佔滿）即結束補技能階段，避免追求不可能再取得的技能。
   function collectingCoreSkills(info){
     return info.known && !info.full && coreSkills.some(s=>!info.owned.has(s.id));
@@ -257,7 +291,7 @@
     if (message===lastDiagnostic) return;
     lastDiagnostic=message;
     if (button) button.title='Shift+1 切換；目前：'+message;
-    console.info('[HANS 巫師 v1.19]',message);
+    console.info('[HANS 巫師 v1.20]',message);
   }
   let nextRerollAt=0, pending=null, lastChoiceAt=0, lastChoiceKey='',choiceTries=0;
   const attempts=new WeakMap();
@@ -343,8 +377,8 @@
     const info=slotInfo(panel);
     const {collecting,chosen}=bestSkillChoice(cards,info);
     if(chosen){chooseCard(chosen.card,chosen.reason);return;}
-    // 尚缺核心且有空位：優先重抽尋找新技能，不能提前拿目標／傷害強化。
-    // 五格已滿：停止追缺少的技能，改按核心 +目標／增益排序。
+    // 尚缺核心且有空位：優先重抽尋找新技能，不能提前拿目標／衝擊／傷害強化。
+    // 五格已滿：停止追缺少的技能，改按核心 +目標／+衝擊／增益排序。
     if(performance.now()<nextRerollAt)return;
     const deck=rerollButton(panel,'#pk-bar button,.pk-acts button,.pk-actions button,#picker button',
       /^(重抽整組|重抽全部|重抽卡組|rerolldeck|rerollall)$/i);
@@ -368,20 +402,20 @@
   }
   const safeTick=()=>{try{tick();}catch(error){
     diagnostic('腳本錯誤：'+String(error?.message||error));
-    console.error('[HANS 巫師 v1.19]',error);
+    console.error('[HANS 巫師 v1.20]',error);
   }};
   function enable(on){
     clearInterval(timer);
     timer=on?setInterval(safeTick,400):null;
-    button.textContent=label+'選技：'+(on?'開':'關')+' v1.19';
+    button.textContent=label+'選技：'+(on?'開':'關')+' v1.20';
     button.style.background=on?'#186442':'#384455';
     diagnostic(on?'已開啟，等待選卡畫面':'已關閉；按鈕或 Shift+1 開啟');
   }
   function mount(){
     if(!document.body){setTimeout(mount,100);return;}
-    if(document.getElementById('hans-mage-autoskill-v119'))return;
+    if(document.getElementById('hans-mage-autoskill-v120'))return;
     button=document.createElement('button');button.type='button';
-    button.id='hans-mage-autoskill-v119';
+    button.id='hans-mage-autoskill-v120';
     button.style.cssText='position:fixed;left:8px;bottom:84px;z-index:2147483647;color:white;border:1px solid white;border-radius:5px;padding:5px 8px;cursor:pointer';
     button.onclick=()=>{
       const on=timer===null;

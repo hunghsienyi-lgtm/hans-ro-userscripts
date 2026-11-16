@@ -8,10 +8,10 @@
 | --- | --- | --- |
 | 二轉巫師：先補五核心，再優先 +目標／+衝擊（暴風雪與霜凍之術） | 1.20 | [HANS_Wizard_AutoSkill.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Wizard_AutoSkill.user.js) |
 | 斐揚森林：首次 1:00、之後每分鐘採集 | 1.9.2 | [HANS_Forest_Magnet_Loot.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Forest_Magnet_Loot.user.js) |
-| 舊版斐揚森林／洞穴自動重進（**已退役，不再自動點擊**） | 1.8.1 | [HANS_Payon_Auto_Reenter.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Payon_Auto_Reenter.user.js) |
+| **開局巡走／2:00、3:00、6:00 找磁鐵／Lv120 免翻牌**（覆蓋原文字重進腳本） | **2.0.0** | [HANS_Payon_Auto_Reenter.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Payon_Auto_Reenter.user.js) |
 | **選關＋戰利品整合版（右下角）**：自動掃描關卡、可選 3 分鐘刷卡中途退出、結算紀錄、難度與場次 CSV、Discord | **0.7.0** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
 
-**2026-11-16 起，選關與戰利品已整合為同一支腳本。** 請在 Tampermonkey 將戰利品更新到 v0.7.0；舊選關更新到 v1.8.1 後不再執行，自動重進改由右下角戰利品面板內的「重進」開關與關卡選單控制（不再顯示右上角固定視窗）。其餘巫師選技及森林採集維持獨立。安裝前先停用重複用途舊版腳本。後續更新時保留檔名與網址，增加腳本 `@version`，上傳覆寫到 `main`，Tampermonkey 依設定定期檢查 `@updateURL` 並取得 `@downloadURL`。更新頻率依瀏覽器與 Tampermonkey 設定而異；如需即時更新，可在 Tampermonkey 手動檢查更新。
+**2026-11-16 起，選關與戰利品已整合為同一支腳本。** 請在 Tampermonkey 將戰利品更新到 v0.7.0；原『文字重進』已更新改為 v2.0.0 的獨立巡走／磁鐵腳本，不再負責重進，自動重進改由右下角戰利品面板內的「重進」開關與關卡選單控制（不再顯示右上角固定視窗）。其餘巫師選技及森林採集維持獨立。安裝前先停用重複用途舊版腳本。後續更新時保留檔名與網址，增加腳本 `@version`，上傳覆寫到 `main`，Tampermonkey 依設定定期檢查 `@updateURL` 並取得 `@downloadURL`。更新頻率依瀏覽器與 Tampermonkey 設定而異；如需即時更新，可在 Tampermonkey 手動檢查更新。
 
 ## 安全與已知問題
 
@@ -27,7 +27,7 @@
 
 ## 整合版操作
 
-1. 篡改猴檢查更新，確認「戰利品」v0.7.0 與「舊自動重進」v1.8.1 已更新。
+1. 篡改猴檢查更新，確認「戰利品」v0.7.0 與「開局巡走／磁鐵」v2.0.0 已更新。
 2. 重新整理 HANS，點開**右下角**「📦 HANS 選關＋戰利品」，就在同一面板內挑選任一已掃描且已解鎖的遠征關卡（包含原有斐揚、獸人村及向下捲動才能看到的關卡）、啟用「重進」及查看戰利品；不再占用右上角小地圖的位置。
 3. 選關畫面會記下六項難度與獎勵倍率，不改動難度滑桿；結算時先記錄縮圖與戰績、封存本場，再按「返回角色」。
 4. 右下「場次 CSV」可匯出每局強度、可見縮圖數與有名稱的掉寶紀錄。Discord 發送在本機佇列排隊，不會因網路超時阻塞選關。
@@ -50,3 +50,16 @@
 - 結束前會封存此局已辨識的掉落資料，標記為「主動捨棄，沒有正常結算」。**是否保留捨棄前取得的卡片目前沒有 HANS 官方實證**，請先手動測一場確認物品仍在背包，避免白刷。
 - 若發生 ESC 沒反應、找不到「回到主選單」或「捨棄」，腳本會停止自動重進，不會盲點別的按鈕；網頁重新載入時，開關與短場操作狀態可在同一瀏覽器分頁中恢復。
 - 其他選技與磁鐵採集腳本未修改。本模式僅在啟用整合腳本的自動重進時執行。
+
+## 新增：v2.0.0 開局巡走／磁鐵／Lv120 免翻牌
+
+這支程式沿用原「文字重進」的檔案與固定更新網址 `HANS_Payon_Auto_Reenter.user.js`，僅提供遊戲內**移動與翻牌停止**。關卡選擇、結算、捨棄重進由右下角 `HANS_Loot_Journal.user.js` v0.7.0 負責，不在此重複操作。
+
+- 遊戲 **00:00–00:59**：在出生點附近按 WASD 短距離巡走，利用遊戲本身的自動攻擊升級，沿路拾取經驗。
+- **1:00**：回到偵測到的出生位置，定點攻擊直到 2:00。
+- **2:00**、**3:00**、**6:00**：各開一輪最多 35 秒的磁鐵搜尋，找到並近距離消失才暫判成功；每輪結束或逾時都返回出生點。逾時的時間窗不補刷，以免干擾後續安排。
+- **6:00 磁鐵流程完成且已返點**，之後若升級視窗出現 **Lv120 或以上**，點擊「之後不再翻牌」一次。若不到 Lv120，仍讓原有巫師選技腳本運作；不在 6:00 強行跳掉升級。
+- 點擊左側「HANS 巡走」按鈕或按 **Shift+6** 啟動；狀態記在當前瀏覽器分頁，重進時維持啟用。首次須啟用。
+- 如舊森林磁鐵採集 v1.9.2 仍在運作，本腳本會在辨識其啟用狀態時嘗試關閉，以防兩支程式同時輸入方向鍵。
+- 正常的巫師選技 v1.20、選關＋戰利品 v0.7.0 仍維持原樣。這次腳本已通過語法檢查與模擬時間軸測試，但仍需在當前 HANS 網站測試實際座標、拾取與免翻牌按鈕。
+

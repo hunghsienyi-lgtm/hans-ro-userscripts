@@ -438,9 +438,37 @@
       finishRun('結算等待逾時');
     }else status('等待結算資料穩定，暫不返回角色');
   }
+
+  // 主動離場沒有正常戰利品結算；不得把未顯示的卡片誤認為已取得。
+  function settleShortRun(seconds,stageName){
+    if(!settings.running)return true;
+    if(!currentRun)ensureRun();
+    if(!currentRun||currentRun.phase!=='active'||currentRun.summaryQueued)return true;
+    const secs=Math.max(0,Math.floor(Number(seconds)||0));
+    currentRun.summaryObserved={
+      dropIcons:null,cardIcons:null,hasDropSection:false,hasCardSection:false,
+      stats:{duration:String(Math.floor(secs/60)).padStart(2,'0')+':'+String(secs%60).padStart(2,'0'),
+        survived:null},abandoned:true
+    };
+    currentRun.captureWarning='3分鐘刷卡模式主動捨棄未完成的一局；沒有正常戰鬥結算。'
+      +'只記錄離場前可辨識的掉落，無法證實卡片在捨棄後是否保留。';
+    currentRun.abortReason='3分鐘刷卡模式主動離場';
+    currentRun.difficulty=currentRun.difficulty||{stage:stageName||'未確認'};
+    currentRun.phase='settled';currentRun.settledAt=nowISO();currentRun.summaryQueued=true;
+    saveRun();runHistory.push(summarizeResultsForExport(currentRun));saveJSON(HISTORY_KEY,runHistory);
+    if(settings.notify){
+      const msgs=runSummaryPayloads(currentRun);
+      msgs.forEach((msg,i)=>queueDiscordPayload(msg,'3分鐘主動離場 '+(i+1)+'/'+msgs.length));
+    }
+    lastSummaryText='主動離場：可讀紀錄 '+runRecords().length+' 筆（無正常結算）';
+    status(lastSummaryText);updateUI();
+    return true;
+  }
+
   // 「選關」與「戰利品」現在位於同一使用者腳本，共用可離場旗標。
   const stageLootBridge={
     captureDifficulty(stageId){return captureDifficulty(stageId);},
+    settleShortRun(seconds,stageName){return settleShortRun(seconds,stageName);},
     readyToLeave(){
       if(!settings.running){status('紀錄功能已暫停，為防漏記不自動返回角色');return false;}
       if(!resultVisible())return false;

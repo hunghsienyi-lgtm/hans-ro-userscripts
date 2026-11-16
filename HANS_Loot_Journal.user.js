@@ -1111,7 +1111,7 @@
       const toMain=findControl(/^(?:回到主選單|回主選單|返回主選單)$/i);
       if(paused&&toMain&&now-shortExit.lastAction>1200&&shortExit.tries<3){
         shortExit.tries++;shortExit.lastAction=now;saveShortExit();
-        stageLootBridge.settleShortRun(shortExit.gameSeconds||180,targetStage().name);
+        stageLootBridge.settleShortRun(shortExit.gameSeconds||180,targetLabel());
         toMain.click();shortPhase('discard');
         tell('已按回到主選單，等待捨棄');return true;
       }
@@ -1380,6 +1380,65 @@
     return hits(W.story).length > 0 || [...document.querySelectorAll('button,[role="button"]')]
       .some(el => el.getClientRects().length > 0 && W.story.test(norm(el.textContent)));
   }
+
+  // 遠征左上角的周目按鈕。必須驗證按鈕選中狀態，才可自動出征。
+  function worldTabs(){
+    const tabs={};
+    for(const el of document.querySelectorAll('button,[role="button"]')){
+      if(hud.contains(el)||!shown(el))continue;
+      const m=norm(el.textContent||'').match(/^([一二三123])[周週]目$/);
+      if(!m)continue;
+      const id={'一':1,'二':2,'三':3,'1':1,'2':2,'3':3}[m[1]];
+      if(id&&!tabs[id])tabs[id]=el;
+    }
+    return Object.keys(tabs).length===3?tabs:null;
+  }
+  function selectedWorldFromTabs(tabs){
+    if(!tabs)return 1;
+    const yes=Object.entries(tabs).filter(([,el])=>
+      el.getAttribute('aria-selected')==='true'||el.getAttribute('aria-pressed')==='true'||
+      el.getAttribute('data-selected')==='true'||el.getAttribute('data-active')==='true'||
+      /(?:^|[\s_-])(?:active|selected|current)(?:$|[\s_-])/i.test(String(el.className||'')));
+    if(yes.length===1)return Number(yes[0][0]);
+    // HANS 截圖裡選取按鈕為深藍色，其他為淡藍；若無差異則停止而不猜。
+    const colors=Object.entries(tabs).map(([id,el])=>{
+      const raw=getComputedStyle(el).backgroundColor||'';
+      const rgb=raw.match(/rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/);
+      if(!rgb)return {id:Number(id),b:null};
+      const [r,g,b]=rgb.slice(1,4).map(Number);
+      return {id:Number(id),b:.2126*r+.7152*g+.0722*b};
+    });
+    if(colors.some(v=>v.b===null))return null;
+    colors.sort((a,b)=>a.b-b.b);
+    return colors[1].b-colors[0].b>35?colors[0].id:null;
+  }
+  function currentWorldState(){
+    const tabs=worldTabs();return {tabs,available:!!tabs,world:tabs?selectedWorldFromTabs(tabs):1};
+  }
+  let worldClickAt=0;
+  function ensureWorldTab(){
+    const state=currentWorldState(),wanted=chosenWorld();
+    if(!state.available){
+      if(wanted===1)return true;
+      tell('找不到二／三周目切換鈕，暫不出征');return false;
+    }
+    if(state.world===wanted){
+      if(worldClickAt&&Date.now()-worldClickAt<650){tell('等待周目切換完成');return false;}
+      return true;
+    }
+    if(Date.now()-worldClickAt<1100)return false;
+    if(state.world===null&&(attempts.world||0)>0){
+      tell('周目選取狀態無法確認，暫不出征，避免掛錯周目');return false;
+    }
+    if(action('world',state.tabs[wanted],WORLD_NAMES[wanted],2,1200)){
+      worldClickAt=Date.now();
+      resetCatalog();catalog.world=null;
+      stageClickedAt=0;departAt=0;
+      tell('已切換'+WORLD_NAMES[wanted]+'，等待確認');
+    }
+    return false;
+  }
+
   function expeditionOpen(){
     // 往下捲後斐揚可能不在畫面，依左側關卡卡片判定，不再只找兩張斐揚卡。
     if(findControl(W.wilderness))return false;
@@ -1390,16 +1449,17 @@
     return !!(depart||title||storyTextIsVisible()||rows.length>=3);
   }
   function stageTarget(){
-    const target=norm(targetStage().name);
-    return stageRows().find(x=>norm(x.name)===target)||null;
+    const target=norm(targetStage()?.name||'');
+    return target?stageRows().find(x=>norm(x.name)===target)||null:null;
   }
   function seekStage(){
-    const target=targetStage().name;
-    if(catalog.searchName!==target){
-      catalog.searchName=target;catalog.searchSteps=0;
+    const target=targetStage()?.name||'';
+    const key=chosenWorld()+'|'+target;
+    if(catalog.searchName!==key){
+      catalog.searchName=key;catalog.searchSteps=0;
       if(catalog.scroll)catalog.scroll.scrollTop=0;
     }
-    const rows=readStageCatalog();
+    const rows=readStageCatalog(chosenWorld());
     const row=rows.find(x=>norm(x.name)===norm(target));
     if(row)return row;
     const el=catalog.scroll;
@@ -1423,8 +1483,11 @@
   }
   function handleExpedition(){
     phase('expedition');
+    if(!ensureWorldTab())return;
+    if(catalog.world!==chosenWorld()){stageExplorerTick();return;}
     if(!catalog.complete){tell('正在向下讀取完整關卡列表：'+catalog.observed.size+' 個');return;}
     const stage=targetStage();
+    if(!stage){tell('請先選擇'+WORLD_NAMES[chosenWorld()]+'的關卡，暫不出征');return;}
     if(stage.unlocked===false){tell('尚未解鎖：'+stage.name);return;}
     const row=stageTarget()||seekStage();
     if(!row)return;
@@ -1435,8 +1498,10 @@
     const previewMatch=previewHits.some(h=>stage.re.test(h.t));
     const otherPreview=previewHits.some(h=>!stage.re.test(h.t));
     // 如果右邊明顯顯示另一個副本，即使左邊的卡片有「已選」樣式也不信任。
-    const confirmed=previewMatch || (!otherPreview && selectedStage(row.el));
+    const confirmed=(selectedStage(row.el)||stageClickedAt>0)&&
+      (previewMatch||(!otherPreview&&selectedStage(row.el)));
     const depart=findControl(W.depart);
+    if(stageClickedAt&&Date.now()-stageClickedAt<1500){tell('已按關卡，等待右側預覽更新');return;}
     if(confirmed && depart){
       if(departAt && Date.now()-departAt<10000){tell('已按出發，等待難度視窗');return;}
       if(action('depart',depart,'出發',2,1100))departAt=Date.now();
@@ -1537,7 +1602,7 @@
         action('back',back,'返回角色',3,1500);return;}
       const talk=findControl(W.talk);
       if(talk){phase('town');action('talk',talk,'與隊長交談',4,1800);return;}
-      phase('waiting');tell(`等待結算／主城／遠征／難度視窗（目標：${targetStage().name}）`);
+      phase('waiting');tell('等待結算／主城／遠征／難度視窗（目標：'+targetLabel()+'）');
     } catch(e) {tell('偵測錯誤：請截圖並回報');console.error('[HANS 整合選關]',e);}
   }
   // 沒有開啟自動重進時，進遠征列表也會掃描；讓玩家先挑選新關卡。

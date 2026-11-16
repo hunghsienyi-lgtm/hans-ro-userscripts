@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 二轉巫師｜五核心自動選技＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.18
-// @description  二轉巫師先學五核心，再優先追加目標；未齊先重抽找技能，耗盡後保底不中斷；寶箱尋寶率優先。
+// @version      1.19
+// @description  二轉優先學暴風雪、霜凍之術與三箭，學齊再追加目標；冰凍術非核心；尋寶率寶箱優先。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
 // @run-at       document-idle
@@ -12,7 +12,7 @@
 // ==/UserScript==
 (() => {
   'use strict';
-  if (document.getElementById('hans-mage-autoskill-v118')) return;
+  if (document.getElementById('hans-mage-autoskill-v119')) return;
   const potion = [/傷害藥水|damage potion|potion of damage/i, /範圍藥水|area potion|potion of area/i];
   const label = '巫師';
   const shown = el => {
@@ -52,12 +52,12 @@
     return gain;
   }
 
-  // v1.18：二轉五核心；分支天賦「三導管」本身不是局內技能，不在這裡選。
+  // v1.19：二轉五核心；暴風雪 > 霜凍之術 > 三箭；「冰凍術」不是「霜凍之術」。
   const coreSkills = [
+    {id:'storm', label:'暴風雪', name:/暴風雪|storm\s*gust|\bblizzard\b/i,
+      slot:/blizzard|storm[-_]?gust|(?:^|[_.-])storm(?:gust)?$|^stormgust$|^wizardstorm$/i},
     {id:'frost', label:'霜凍之術', name:/霜凍之術|霜凍術|frost\s*(?:nova|spell)/i,
       slot:/frost(?:nova|spell)?|freezingspell|frostbite/i},
-    {id:'storm', label:'暴風雨', name:/暴風雨|storm\s*gust|\bstorm\b/i,
-      slot:/(?:^|[_.-])storm(?:gust)?$|^stormgust$|^wizardstorm$/i},
     {id:'firebolt', label:'火箭術', name:/火箭術|fire\s*bolt/i,
       slot:/fire[-_]?bolt/i},
     {id:'lightning', label:'雷擊術', name:/雷擊術|lightning\s*bolt/i,
@@ -106,7 +106,7 @@
   }
   function scoreSkill(card,info){
     const core=coreOf(card), newSkill=isNew(card), text=read(card,'.pk-lines').normalize('NFKC');
-    // v1.18：先拿缺少的五大核心技能；五核心齊全後才把 +目標列為第一優先。
+    // v1.19：先拿缺少的五大核心技能；五核心齊全後才把 +目標列為第一優先。
     // 即使卡片上同時寫有 +目標，只要它屬於「新技能」，仍按補技能處理。
     if(newSkill && info.full) return {score:-Infinity,reason:'技能格已滿'};
     if(newSkill){
@@ -160,7 +160,10 @@
     if(core) return 5000+(5-coreOrder(core));
     const name=cardName(card);
     // 無核心、無可用重抽時，優先能清怪／控場的二轉候選，其次普通非核心；不能阻塞選卡。
-    if(/暴風雪|雷爆|火焰之壁|火牆|冰凍|blizzard|thunderstorm|fire\s*wall/i.test(name)) return 2000;
+    // 即使新技能標記未正常顯示，也不把「冰凍術」當成二轉主力。
+    if(/暴風雪|blizzard|storm\s*gust/i.test(name)) return 3500;
+    if(/雷爆|火焰之壁|火牆|thunderstorm|fire\s*wall/i.test(name)) return 2000;
+    if(/冰凍術/i.test(name)) return 900;
     return 1000;
   }
   // v1.14：辨識寶箱卡片上的「尋寶率正增益」，包括神祇。
@@ -254,7 +257,7 @@
     if (message===lastDiagnostic) return;
     lastDiagnostic=message;
     if (button) button.title='Shift+1 切換；目前：'+message;
-    console.info('[HANS 巫師 v1.18]',message);
+    console.info('[HANS 巫師 v1.19]',message);
   }
   let nextRerollAt=0, pending=null, lastChoiceAt=0, lastChoiceKey='',choiceTries=0;
   const attempts=new WeakMap();
@@ -365,20 +368,20 @@
   }
   const safeTick=()=>{try{tick();}catch(error){
     diagnostic('腳本錯誤：'+String(error?.message||error));
-    console.error('[HANS 巫師 v1.18]',error);
+    console.error('[HANS 巫師 v1.19]',error);
   }};
   function enable(on){
     clearInterval(timer);
     timer=on?setInterval(safeTick,400):null;
-    button.textContent=label+'選技：'+(on?'開':'關')+' v1.18';
+    button.textContent=label+'選技：'+(on?'開':'關')+' v1.19';
     button.style.background=on?'#186442':'#384455';
     diagnostic(on?'已開啟，等待選卡畫面':'已關閉；按鈕或 Shift+1 開啟');
   }
   function mount(){
     if(!document.body){setTimeout(mount,100);return;}
-    if(document.getElementById('hans-mage-autoskill-v118'))return;
+    if(document.getElementById('hans-mage-autoskill-v119'))return;
     button=document.createElement('button');button.type='button';
-    button.id='hans-mage-autoskill-v118';
+    button.id='hans-mage-autoskill-v119';
     button.style.cssText='position:fixed;left:8px;bottom:84px;z-index:2147483647;color:white;border:1px solid white;border-radius:5px;padding:5px 8px;cursor:pointer';
     button.onclick=()=>{
       const on=timer===null;

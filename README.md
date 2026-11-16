@@ -6,7 +6,7 @@
 
 | 腳本 | 版本 | Tampermonkey 安裝來源 |
 | --- | --- | --- |
-| 二轉巫師：五核心＋目標／衝擊；三分鐘巡走 Lv30 最後技能照選、Lv31 後免翻牌 | 1.22 | [HANS_Wizard_AutoSkill.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Wizard_AutoSkill.user.js) |
+| 二轉巫師：五核心＋目標／衝擊；三分鐘巡走 Lv30技能照選，Lv31先點免翻牌再完成眼前最後一張 | 1.23 | [HANS_Wizard_AutoSkill.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Wizard_AutoSkill.user.js) |
 | 斐揚森林：首次 1:00、之後每分鐘採集 | 1.9.2 | [HANS_Forest_Magnet_Loot.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Forest_Magnet_Loot.user.js) |
 | **開局巡走／2、3、6 分鐘與之後每 2 分鐘找磁鐵／Boss 繼續採集／Lv120 免翻牌**（覆蓋原文字重進腳本） | **2.1.0** | [HANS_Payon_Auto_Reenter.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Payon_Auto_Reenter.user.js) |
 | **三分鐘刷卡專用巡走**：走到 Lv30 才返點、站打 30 秒、Lv31 免翻牌、3:00 磁鐵 | **1.0.4** | [HANS_ThreeMinute_Magnet_Patrol.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_ThreeMinute_Magnet_Patrol.user.js) |
@@ -118,3 +118,7 @@ HANS 在高怪量／高難度時可能顯示「◆ 高難度提醒」，內容�
 - 整合版 **v0.7.7**：把實際 HANS 結算標題「你死了」加入辨識。死亡時如果只有「獲得的卡片」沒有「獲得的掉落」，仍可在基本等待（至少約 5.2 秒）及卡片／戰績穩定後封存並按「返回角色」。畫面一直不完整最多約 15.5 秒記警告放行。繼續使用原本的自動選關與進圖下滾10次。
 - 三分鐘巡走 **v1.0.4**：移除固定走 30 秒就返點的條件，改為**未達 Lv30 持續巡走拾經驗**，Lv30 才返回開場原點並站打約 30 秒。Lv30 最後一張技能依巫師選技 v1.22 正常選，Lv31 升級畫面才按「之後不再翻牌」。3:00 第二次磁鐵與右下短場重進仍維持；若本場提前死亡或 3 分鐘捨棄流程啟動，則不保證該場能到 Lv30。
 - 已通過 JavaScript 語法與死亡結算的最小等待模擬測試，實際 HANS 網頁仍需測試「你死了 → 封存卡片 → 返回角色 → 重進」，以及 Lv25、Lv28 後是否繼續走。
+
+## v1.23 巫師 Lv31 最後一張卡修復
+
+HANS 點選「之後不再翻牌」後會出現「已關閉翻牌（這張選完就不再跳）」；**當前仍然需要選完最後一張**。舊巫師 v1.22 於 Lv31 直接停止選卡，因此停在 Level Up 畫面。v1.23 刪除 Lv31 阻斷，凡遊戲仍顯示選卡視窗就持續依五核心／+目標／+衝擊原優先順序選卡並確認。面板收起後才結束。寶箱仍以最大正向尋寶率優先；三分鐘巡走 v1.0.4 在 Lv31 點免翻牌的機制未更動。已驗證語法、模擬 Lv31 選卡與選卡確認動作，實際 HANS 須更新後測試。

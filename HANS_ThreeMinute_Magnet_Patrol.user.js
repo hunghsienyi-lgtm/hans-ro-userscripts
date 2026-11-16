@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         HANS RO｜三分鐘刷卡巡走｜先走30秒返點停30秒＋Lv30停走
+// @name         HANS RO｜三分鐘刷卡巡走｜走到Lv30返點＋原地站打＋磁鐵
 // @namespace    hunghung-ro-local-tools
-// @version      1.0.3
-// @description  HANS短場：開場巡走30秒後回原點定點打30秒、再找磁鐵；Lv30立刻停止亂走並返點，Lv30最後一張技能照選、Lv31起不再翻牌；3:00磁鐵保留。
+// @version      1.0.4
+// @description  HANS短場：從開局巡走直到 Lv30 才返原點，返點站打30秒再找磁鐵；Lv30最後技能照選、Lv31起免翻牌；3:00第二磁鐵。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        none
@@ -17,7 +17,7 @@
   const KEY_ENABLED='hans_ro_three_min_patrol_enabled_v1';
   const KEY_SYNC='hans_ro_three_min_magnet_sync_v1';
   const KEY_SHORT='hans-ro-stage-loot-short3-v070';
-  const OPT={patrolSeconds:30,first:60,second:180,skipLevel:31,homePauseSeconds:30,seekMaxMs:35000,confirmMs:550,
+  const OPT={first:60,second:180,skipLevel:31,homePauseSeconds:30,seekMaxMs:35000,confirmMs:550,
     reach:3.4,homeReach:2.8,radius:68,returnMaxMs:40000,stallMs:2900,detourMs:850,maxDetours:4,tickMs:140};
   const PATROL=['d','s','a','a','w','d','w','s'];
   const now=()=>performance.now();
@@ -35,7 +35,7 @@
   const button=document.createElement('button');
   button.id=UI_ID;button.type='button';button.setAttribute('aria-keyshortcuts','Shift+7');
   button.style.cssText='position:fixed;left:8px;bottom:158px;z-index:2147483647;background:#384455;color:white;border:1px solid #eaeaea;border-radius:6px;padding:5px 8px;font:12px system-ui;max-width:min(370px,90vw);cursor:pointer;text-align:left';
-  button.title='Shift+7 開關；先巡走30秒，回原點站打30秒，再找第一顆磁鐵；Lv30立刻停止亂走返點，Lv30最後一張照選，Lv31起停止翻牌；3:00再找磁鐵。';
+  button.title='Shift+7 開關；一開局持續巡走直到 Lv30（不是走30秒），達 Lv30 返回起點並站打30秒；Lv30最後一張照選，Lv31免翻牌，3:00找第二顆磁鐵。';
   (document.body||document.documentElement).append(button);
   const info=s=>{const text='HANS 3分巡走｜'+s;if(button.textContent!==text)button.textContent=text;};
   let enabled=false,timer=null,canvas=null,restore=null,player=null,playerAt=0,magnets=[],arc=null,points=[];
@@ -143,7 +143,7 @@
   }
   function startRound(seconds){
     reset();run.started=true;run.wasOutside=false;run.home=[...player];run.seconds=seconds;
-    run.mode='patrol';sync('active');info('開場巡走30秒，再返點站打30秒');
+    run.mode='patrol';sync('active');info('開場持續巡走升級，直到 Lv30 才返點');
   }
   function toward(a,b){
     const dx=b[0]-a[0],dy=b[1]-a[1],t=.35*Math.max(Math.abs(dx),Math.abs(dy));
@@ -304,10 +304,14 @@
     if(run.mode==='return'){driveHome(t);return;}
     if(run.mode==='failed'){move();return;}
     if(run.mode==='patrol'){
-      if(clock>=OPT.patrolSeconds||run.level30Reached){
-        returnHome('initial',t);driveHome(t);return;
+      // 不再因開局滿30秒而停。Lv25、Lv28一樣繼續走，只有確認 Lv30 才返點。
+      if(run.level30Reached){
+        returnHome('level30',t);driveHome(t);return;
       }
-      patrol(t);info('開場巡走拾經驗 '+clock+'／30 秒');return;
+      patrol(t);
+      info('持續巡走升級直到 Lv30｜目前遊戲時間 '+
+        Math.floor(clock/60)+':'+String(clock%60).padStart(2,'0'));
+      return;
     }
     if(run.mode==='park'){
       if(run.holdUntilSeconds!==null && clock<run.holdUntilSeconds){

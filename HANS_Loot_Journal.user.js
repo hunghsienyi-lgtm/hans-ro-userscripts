@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.8.6
-// @description  v0.8.6：獨立視角縮遠開關＋立即縮遠，改用簡化進場偵測並嘗試直接控制公開的 Three.js 鏡頭；保留其他功能。
+// @version      0.8.7
+// @description  v0.8.7：修正獨立視角工具被其他腳本蓋住；改置右上角、最上層、可拖曳與記住位置，維持自動開關及手動縮遠。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.8.6';
+  const VERSION = '0.8.7';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -1083,19 +1083,68 @@
   try{zoomAutoEnabled=localStorage.getItem(ZOOM_TOGGLE_KEY)!=='0';}catch{}
   const zoomPanel=document.createElement('section');
   zoomPanel.id='hans-independent-zoom-panel';
-  zoomPanel.style.cssText='position:fixed;left:10px;bottom:70px;z-index:2147483645;background:#172a3beF;color:#fff;border:1px solid #88c1e4;border-radius:8px;padding:8px;max-width:225px;font:12px/1.45 sans-serif;box-shadow:0 3px 12px #0007';
+  // 原本左下角 z-index 比其他腳本低，導致開關被蓋住、無法點擊。
+  // 此版在右上角以最高層級顯示；整個面板可以拖曳到任何不擋遊戲的位置。
+  zoomPanel.style.cssText='position:fixed;top:88px;left:8px;right:auto;bottom:auto;z-index:2147483647 !important;box-sizing:border-box;width:184px;max-width:calc(100vw - 16px);background:#172a3bf5;color:#fff;border:1px solid #88c1e4;border-radius:8px;padding:7px 8px;box-shadow:0 4px 14px #0009;font:12px/1.4 sans-serif;pointer-events:auto;user-select:none';
+  const zoomHandle=document.createElement('div');
+  zoomHandle.textContent='⠿ 視角縮遠工具・拖曳移動';
+  zoomHandle.title='按住這一行可拖曳，避開其他腳本按鈕';
+  zoomHandle.style.cssText='padding:3px 2px 7px;cursor:move;color:#e0f3ff;font:bold 11px/1.3 sans-serif;touch-action:none';
   const zoomToggleButton=document.createElement('button');
   zoomToggleButton.type='button';zoomToggleButton.id='hans-independent-zoom-toggle';
-  zoomToggleButton.style.cssText='padding:6px 9px;border-radius:6px;color:white;border:1px solid #9abacf;cursor:pointer;font:bold 12px sans-serif';
-  const zoomTitle=document.createElement('div');
-  zoomTitle.textContent='獨立視角縮遠｜每場進圖';
-  zoomTitle.style.cssText='font-weight:700;margin-bottom:6px';
-  zoomStatus.style.marginTop='5px';
+  zoomToggleButton.style.cssText='display:block;width:100%;box-sizing:border-box;min-height:33px;padding:6px 7px;border-radius:6px;color:white;border:1px solid #9abacf;cursor:pointer;font:bold 12px sans-serif;pointer-events:auto;touch-action:manipulation';
   zoomTestButton.textContent='立即縮遠 10 次';
-  zoomPanel.append(zoomTitle,zoomToggleButton,zoomTestButton,zoomStatus);
+  zoomTestButton.style.cssText='display:block;width:100%;box-sizing:border-box;margin:5px 0 0;min-height:33px;color:white;background:#496f98;padding:6px 7px;border:1px solid #a7c7ed;border-radius:5px;font:12px sans-serif;cursor:pointer;pointer-events:auto;touch-action:manipulation';
+  zoomStatus.style.cssText='display:block;margin-top:5px;color:#c7e9ff;font:10px/1.3 sans-serif;overflow-wrap:anywhere;max-height:42px;overflow:hidden;user-select:text';
+  zoomPanel.append(zoomHandle,zoomToggleButton,zoomTestButton,zoomStatus);
   document.body.append(zoomPanel);
+
+  const ZOOM_PANEL_POSITION_KEY='hans-ro-zoom-panel-position-v087';
+  const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
+  function placeZoomPanel(x,y){
+    const w=zoomPanel.offsetWidth||184,h=zoomPanel.offsetHeight||130;
+    zoomPanel.style.left=clamp(Math.round(x),6,Math.max(6,innerWidth-w-6))+'px';
+    zoomPanel.style.top=clamp(Math.round(y),6,Math.max(6,innerHeight-h-6))+'px';
+  }
+  let savedZoomPosition=null;
+  try{savedZoomPosition=JSON.parse(localStorage.getItem(ZOOM_PANEL_POSITION_KEY)||'null')}catch{}
+  placeZoomPanel(
+    Number.isFinite(savedZoomPosition?.x)?savedZoomPosition.x:innerWidth-196,
+    Number.isFinite(savedZoomPosition?.y)?savedZoomPosition.y:88
+  );
+  function saveZoomPanelPosition(){
+    try{localStorage.setItem(ZOOM_PANEL_POSITION_KEY,JSON.stringify({
+      x:parseFloat(zoomPanel.style.left)||6,y:parseFloat(zoomPanel.style.top)||6
+    }))}catch{}
+  }
+  let dragZoom=null;
+  zoomHandle.addEventListener('pointerdown',e=>{
+    if(e.button!==0)return;
+    e.preventDefault();e.stopPropagation();
+    dragZoom={id:e.pointerId,x:e.clientX,y:e.clientY,
+      left:parseFloat(zoomPanel.style.left)||0,top:parseFloat(zoomPanel.style.top)||0};
+    zoomHandle.setPointerCapture(e.pointerId);
+  });
+  zoomHandle.addEventListener('pointermove',e=>{
+    if(!dragZoom||dragZoom.id!==e.pointerId)return;
+    e.preventDefault();e.stopPropagation();
+    placeZoomPanel(dragZoom.left+e.clientX-dragZoom.x,dragZoom.top+e.clientY-dragZoom.y);
+  });
+  function stopZoomDrag(e){
+    if(!dragZoom||dragZoom.id!==e.pointerId)return;
+    e.stopPropagation();dragZoom=null;saveZoomPanelPosition();
+  }
+  zoomHandle.addEventListener('pointerup',stopZoomDrag);
+  zoomHandle.addEventListener('pointercancel',stopZoomDrag);
+  zoomPanel.addEventListener('click',e=>e.stopPropagation());
+  zoomPanel.addEventListener('pointerdown',e=>e.stopPropagation());
+  zoomPanel.addEventListener('wheel',e=>e.stopPropagation(),{passive:true});
+  window.addEventListener('resize',()=>{
+    placeZoomPanel(parseFloat(zoomPanel.style.left)||6,parseFloat(zoomPanel.style.top)||6);
+    saveZoomPanelPosition();
+  });
   function updateZoomToggle(){
-    zoomToggleButton.textContent='視角自動縮遠：'+(zoomAutoEnabled?'開':'關');
+    zoomToggleButton.textContent='自動縮遠：'+(zoomAutoEnabled?'開':'關');
     zoomToggleButton.style.background=zoomAutoEnabled?'#176b51':'#6c4750';
   }
   updateZoomToggle();
@@ -1106,9 +1155,9 @@
     if(!zoomAutoEnabled){
       zoomInProgress=false;
       clearZoomPending();
-      zoomNote('自動縮遠已關；可用下方按鈕手動測試');
+      zoomNote('已關閉自動縮遠；仍可手動測試');
     } else {
-      zoomNote('自動縮遠已開，下次進場會執行');
+      zoomNote('已開啟自動縮遠，下次進場執行');
       if(mapReadyForZoom())queueZoom();
     }
   });

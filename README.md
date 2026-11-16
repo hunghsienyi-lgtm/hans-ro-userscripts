@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 二轉巫師：五核心＋目標／衝擊；三分鐘巡走 Lv30技能照選，Lv31先點免翻牌再完成眼前最後一張 | 1.23 | [HANS_Wizard_AutoSkill.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Wizard_AutoSkill.user.js) |
 | 斐揚森林：首次 1:00、之後每分鐘採集 | 1.9.2 | [HANS_Forest_Magnet_Loot.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Forest_Magnet_Loot.user.js) |
-| **開局巡走／2、3、6 分鐘與之後每 2 分鐘找磁鐵／返點失敗安全停靠／Boss 繼續採集／Lv130 免翻牌**（覆蓋原文字重進腳本） | **2.2.0** | [HANS_Payon_Auto_Reenter.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Payon_Auto_Reenter.user.js) |
+| **開局巡走／2、3、6 分鐘與之後每 2 分鐘找磁鐵／中途加入當前局／返點失敗安全停靠／Boss 繼續採集／Lv130 免翻牌**（覆蓋原文字重進腳本） | **2.2.1** | [HANS_Payon_Auto_Reenter.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Payon_Auto_Reenter.user.js) |
 | **三分鐘刷卡專用巡走**：走到 Lv30 才返點、站打 30 秒、Lv31 免翻牌、3:00 磁鐵 | **1.0.4** | [HANS_ThreeMinute_Magnet_Patrol.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_ThreeMinute_Magnet_Patrol.user.js) |
 | **選關＋戰利品整合版（右下角）**：金色不逐件通知、每場統一匯報＋死亡結算返回＋下滾10次、3 分鐘磁鐵協調、選關、Discord、場次 CSV | **0.7.8** | [HANS_Loot_Journal.user.js](https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Loot_Journal.user.js) |
 
@@ -136,3 +136,11 @@ HANS 點選「之後不再翻牌」後會出現「已關閉翻牌（這張選完
 - 只有**每場完整通關、死亡結算、三分鐘主動捨棄**等封存時，才將該場已辨識的所有品質裝備及卡片整理成 Discord 戰利品總表；內容太長時才依 Discord 字數限制分段。
 - 更新時會從尚未送出的舊佇列移除「金色｜」逐件通知；保留已排隊的本場總表與手動連線測試訊息。已送出的 Discord 訊息不回收。
 - 面板顯示「僅每場結束總表」，其他選關、縮放、精簡掉落與磁鐵排程維持原狀。
+
+## v2.2.1 長時間巡走：中途開啟立即接手
+
+- 移除原本 `if(secs>45)` 導致顯示「已進行5:57，下一場開局再執行」的限制。長場巡走開啟後，只要已能讀到遊戲計時、小地圖和人物座標，立即以**目前這一局**開始工作。
+- 未滿 1:00：從目前位置繼續巡走，到 1:00 回到啟用時偵測的臨時定點。已過 1:00：不補做開場巡走，直接以當前座標定點打怪。
+- 已過的磁鐵窗口不補跑；如果正在某個磁鐵時間後10秒內，仍可執行該次搜尋。例如5:57接手，等6:00搜尋；9:50接手，等10:00搜尋。之後維持2、3、6、8、10、12、14分鐘排程及Boss磁鐵監看。
+- 中途接手沒有真正的出生座標，因此介面明白標示**目前位置定點**；這不是原始開場座標。返點超時安全停靠與Lv130停止後續翻牌維持原本機制。三分鐘專用巡走並未修改。
+- 模擬時間軸覆蓋0:00、0:40、1:00、2:57、5:57、6:05、9:50和14:00，另需在HANS實際確認小地圖與計時可辨識。

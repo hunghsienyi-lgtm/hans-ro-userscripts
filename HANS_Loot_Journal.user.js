@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 戰利品全紀錄｜金色通知＋每場總表
 // @namespace    ro-local-loot-journal
-// @version      0.7.2
-// @description  修復高難度提醒：出征／前往野外後辨識彈窗並自動點「入場」，保留原難度及右下選關／戰利品／3分鐘刷卡。
+// @version      0.7.3
+// @description  三分鐘刷卡與0:30／3:00磁鐵巡走同步：3分鐘第二顆磁鐵先搜尋再捨棄；保留選關、難度、戰利品及入場確認。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.7.2';
+  const VERSION = '0.7.3';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -585,9 +585,9 @@
     ui.style.cssText='position:fixed;right:7px;bottom:8px;z-index:2147483647;max-width:calc(100vw - 14px);'+
       'font:12px/1.45 system-ui,sans-serif;color:#fff;background:#203452f0;border:1px solid #98b5db;'+
       'border-radius:8px;padding:6px;box-shadow:0 3px 12px #0007';
-    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.7.2 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
+    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.7.3 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
       <div id="roj4-menu" hidden style="width:265px;max-width:80vw;max-height:60vh;overflow-y:auto;padding-top:6px">
-        <div style="font-size:10px;opacity:.78">HANS 整合 v0.7.2 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
+        <div style="font-size:10px;opacity:.78">HANS 整合 v0.7.3 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
         <div id="roj4-discord">Discord：開｜待送 0</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
           <button id="roj4-toggle">暫停紀錄</button><button id="roj4-notify">關閉 DC</button>
@@ -1031,6 +1031,15 @@
     if(secs<=45&&!shortExit.armed){shortExit.armed=true;shortExit.at=Date.now();saveShortExit();}
     if(!shortExit.armed){tell('3分鐘刷卡待命：下一場開局才開始');return false;}
     if(secs<180+shortPrefs.grace)return false;
+    // 3分鐘巡走若正在尋找第二顆磁鐵，最多等到3:55才捨棄，
+    // 避免原本的3:20定時捨棄在撿磁鐵前發生。超時或回報中斷則恢復原流程。
+    let magnetStatus=null;
+    try{magnetStatus=JSON.parse(sessionStorage.getItem('hans_ro_three_min_magnet_sync_v1')||'null');}catch{}
+    if(secs>=180 && secs<235 && magnetStatus?.enabled===true &&
+       magnetStatus.phase!=='done' && Date.now()-Number(magnetStatus.updatedAt)<6000){
+      tell('3分鐘巡走正在處理第二顆磁鐵，暫緩捨棄（最晚3:55）');
+      return false;
+    }
     shortExit.gameSeconds=secs;shortPhase('escape');
     shortExit.tries=1;shortExit.lastAction=Date.now();saveShortExit();
     sendEsc();

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 戰利品全紀錄｜金色通知＋每場總表
 // @namespace    ro-local-loot-journal
-// @version      0.6.0
-// @description  HANS 選關＋戰利品整合版：讀取進場難度、結算縮圖與戰績；確認封存才自動返回；傳說通知、場次 CSV。
+// @version      0.6.1
+// @description  HANS 選關＋戰利品整合：重進與選關控制收進右下戰利品面板；結算封存後自動返回；難度與戰利品統計。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.6.0';
+  const VERSION = '0.6.1';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -557,9 +557,9 @@
     ui.style.cssText='position:fixed;right:7px;bottom:8px;z-index:2147483647;max-width:calc(100vw - 14px);'+
       'font:12px/1.45 system-ui,sans-serif;color:#fff;background:#203452f0;border:1px solid #98b5db;'+
       'border-radius:8px;padding:6px;box-shadow:0 3px 12px #0007';
-    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.6.0 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> ▾</button>
-      <div id="roj4-menu" hidden style="width:265px;max-width:80vw;padding-top:6px">
-        <div style="font-size:10px;opacity:.78">HANS 整合 v0.6.0 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
+    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.6.1 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
+      <div id="roj4-menu" hidden style="width:265px;max-width:80vw;max-height:60vh;overflow-y:auto;padding-top:6px">
+        <div style="font-size:10px;opacity:.78">HANS 整合 v0.6.1 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
         <div id="roj4-discord">Discord：開｜待送 0</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
           <button id="roj4-toggle">暫停紀錄</button><button id="roj4-notify">關閉 DC</button>
@@ -662,7 +662,10 @@
   }
   const hud = document.createElement('section');
   hud.id = 'hh-payon-integrated-v06';
-  hud.style.cssText = 'position:fixed;top:8px;right:8px;z-index:2147483647;background:#23334bee;color:#fff;border:1px solid #a7c7ed;border-radius:7px;padding:6px 8px;font:12px/1.5 sans-serif;max-width:290px;box-shadow:0 3px 9px #0006';
+  // 與右下角戰利品共用同一面板，不再另行顯示右上固定 HUD（避免遮住小地圖）。
+  hud.style.cssText = 'position:relative;display:block;box-sizing:border-box;width:100%;margin:0 0 8px;'+
+    'background:#23334b;color:#fff;border:1px solid #a7c7ed;border-radius:6px;padding:7px;'+
+    'font:12px/1.5 sans-serif;overflow-wrap:anywhere';
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.style.cssText = 'font:bold 12px sans-serif;padding:4px 8px;color:#fff;background:#5c6b82;border:1px solid #c9dbed;border-radius:5px;cursor:pointer';
@@ -679,7 +682,15 @@
   try{picker.value=localStorage.getItem('hh-ro-dungeon-v16')||'cave';}catch{picker.value='cave';}
   if(!STAGES[picker.value])picker.value='cave';
   hud.append(btn,picker,msg);
-  document.body.append(hud);
+  // 選關與戰利品共用右下原本面板。若主面板尚未生成，重試掛載，不開第二個浮窗。
+  function mountStageIntoLootPanel(){
+    if(!document.body){setTimeout(mountStageIntoLootPanel,200);return;}
+    if(!document.getElementById(UI_ID))makeUI();
+    const menu=document.getElementById('roj4-menu');
+    if(!menu){setTimeout(mountStageIntoLootPanel,200);return;}
+    if(hud.parentElement!==menu)menu.prepend(hud);
+  }
+  mountStageIntoLootPanel();
   let active = false, timer = null, state = '', lastAt=0, attempts={};
   let stageClickedAt=0, beforeStageWasStory=false, departAt=0, wildernessAt=0;
   const targetStage=()=>STAGES[picker.value]||STAGES.cave;
@@ -789,6 +800,8 @@
     active=value;clearInterval(timer);phase('');
     btn.textContent=`重進：${active?'開':'關'}（Shift+5）`;
     btn.style.background=active?'#146f4c':'#5c6b82';
+    const mini=document.getElementById('roj4-stage-mini');
+    if(mini)mini.textContent=`重進：${active?'開':'關'}`;
     tell(active?`已開啟，目標：${targetStage().name}`:'已關閉');
     if(active){timer=setInterval(tick,450);tick();}
   }

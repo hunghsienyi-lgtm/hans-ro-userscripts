@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜長時間巡走＋磁鐵｜返點失敗自動安全停靠＋Lv130免翻牌
 // @namespace    hunghung-ro-local-tools
-// @version      2.2.1
-// @description  長場巡走可在本局任意時間開啟：自動讀遊戲計時並從當下接續磁鐵排程，不必等下一局；返點安全停靠、Lv130停止後續翻牌。
+// @version      2.3.0
+// @description  HANS長場：磁鐵行程改提前5秒（1:55、2:55、5:55等），Boss倒數最後15秒只找磁鐵、不返點或隨機巡走；維持中途接手、Lv130免翻牌。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        none
@@ -18,8 +18,9 @@
   const ENABLE_KEY='hans_ro_early_patrol_magnet_enabled_v200';
   const LEGACY_KEY='hh_ro_forest_gather_enabled_v19';
   const OPT={
-    tickMs:140, clockPollMs:400, firstMinute:60, magnetMinutes:[120,180,360],
-    repeatStartS:480, repeatEveryS:120, repeatLastS:840, bossMagnetRetryMs:2200,
+    tickMs:140, clockPollMs:400, firstMinute:60, magnetMinutes:[115,175,355],
+    repeatStartS:475, repeatEveryS:120, repeatLastS:835, bossMagnetRetryMs:2200,
+    finalBossSeconds:15,
     levelSkip:130, magnetSearchMaxMs:35000, pickupConfirmMs:550,
     magnetReach:3.4, homeReach:2.8, magnetRadius:68,
     returnMaxMs:42000, progressTimeoutMs:2800, detourMs:850,
@@ -29,6 +30,7 @@
   const timeNow=()=>performance.now();
   const dist=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1]);
   const near=(a,b,d)=>dist(a,b)<=d;
+  const formatTime=seconds=>Math.floor(seconds/60)+':'+String(Math.floor(seconds%60)).padStart(2,'0');
   const norm=s=>String(s??'').normalize('NFKC').replace(/[\s\u200b-\u200d]/g,'').trim();
   const visible=e=>{
     if(!e||!e.isConnected||!e.getClientRects().length)return false;
@@ -41,7 +43,7 @@
   const button=document.createElement('button');
   button.id=UI_ID;button.type='button';
   button.style.cssText='position:fixed;left:8px;bottom:120px;z-index:2147483647;background:#384455;color:#fff;border:1px solid #eee;border-radius:5px;padding:5px 8px;font:12px system-ui,sans-serif;cursor:pointer;max-width:min(360px,80vw);text-align:left';
-  button.title='Shift+6 長場巡走；本場進行到任何時間都可立即接手，已過時窗不補跑；中途加入時以目前位置作定點。1分、2／3／6／8／10等磁鐵，Lv130停止後續翻牌。';
+  button.title='Shift+6 長場巡走；1:55、2:55、5:55、7:55、9:55、11:55、13:55 提前找磁鐵；Boss最後倒數15秒專注追磁鐵，不返點；中途啟動立即接手；Lv130停止翻牌。';
   button.setAttribute('aria-keyshortcuts','Shift+6');
   document.body?.appendChild(button);
   function status(s){button.textContent='HANS 巡走｜'+s;}
@@ -57,7 +59,7 @@
     detours:0,detourKey:'',detourUntil:0,seekAt:0,returnAt:0,returnBest:Infinity,
     returnProgressAt:0,returnDetours:0,returnDetourUntil:0,returnDetourKey:'',
     magnetObserved:null,blocked:[],skipClicked:false,skipTries:0,failed:false,
-    homeFallbacks:0,usingFallbackHome:false
+    homeFallbacks:0,usingFallbackHome:false,finalPicked:0
   };
   function move(keys=''){
     for(const key of [...held])if(!keys.includes(key)){
@@ -135,7 +137,7 @@
       seekAt:0,returnAt:0,returnBest:Infinity,returnProgressAt:0,
       returnDetours:0,returnDetourUntil:0,returnDetourKey:'',magnetObserved:null,
       blocked:[],skipClicked:false,skipTries:0,failed:false,
-      homeFallbacks:0,usingFallbackHome:false
+      homeFallbacks:0,usingFallbackHome:false,finalPicked:0
     });
   }
   function startRound(seconds){
@@ -152,11 +154,10 @@
       for(const m of magnetSchedule){
         if(m+OPT.missedWindowS<seconds)round.completed.add(m);
       }
-      if(seconds>360+OPT.missedWindowS)round.sixComplete=true;
+      if(seconds>355+OPT.missedWindowS)round.sixComplete=true;
       const next=magnetSchedule.find(m=>!round.completed.has(m));
-      status('中途接手 '+Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0')+
-        '｜當前位置定點，'+(next===undefined?'等待Boss磁鐵':
-          '下次磁鐵 '+Math.floor(next/60)+':'+String(next%60).padStart(2,'0')));
+      status('中途接手 '+formatTime(seconds)+'｜當前位置定點，'+(next===undefined?'等待Boss磁鐵':
+          '下次磁鐵 '+formatTime(next)));
     }else{
       status('中途接手 '+Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0')+
         '｜繼續巡走，到1:00返目前定點');
@@ -182,7 +183,7 @@
   }
   function park(now){
     move();round.mode='park';round.target=null;round.patrolUntil=0;
-    if(round.part==='360')round.sixComplete=true;
+    if(round.part==='355')round.sixComplete=true;
     round.failed=false;
     status(round.usingFallbackHome?
       '原點路徑受阻｜已改就地定點，後續磁鐵照常執行（安全停靠 '+round.homeFallbacks+' 次）':
@@ -227,7 +228,7 @@
     if(typeof seconds==='number')round.completed.add(seconds);
     if(!inBossPhase())round.blocked=[];
     else{round.blocked=round.blocked.filter(x=>x.until>now);round.bossLastSeekAt=now;}
-    move();status(seconds==='boss'?'Boss戰持續尋磁鐵':Math.floor(seconds/60)+':00 尋磁鐵');
+    move();status(seconds==='boss'?'Boss戰持續尋磁鐵':formatTime(seconds)+' 尋磁鐵');
   }
   function chooseMagnet(now){
     round.blocked=round.blocked.filter(x=>x.until>now);
@@ -237,7 +238,8 @@
     return available.reduce((best,p)=>!best||dist(p,player)<dist(best,player)?p:best,null);
   }
   function seekMagnet(now){
-    if(now-round.seekAt>=OPT.magnetSearchMaxMs){returnHome(round.part,now);return;}
+    const finalOnly=round.mode==='final';
+    if(!finalOnly&&now-round.seekAt>=OPT.magnetSearchMaxMs){returnHome(round.part,now);return;}
     // 拾取確認：小地圖上的磁鐵要在曾接近後持續消失，不能憑一次消失判定已取得。
     const w=round.magnetObserved;
     if(w){
@@ -247,6 +249,13 @@
       else if(now-w.missingAt<OPT.pickupConfirmMs){move();return;}
       else if(now-w.missingAt>=OPT.pickupConfirmMs){
         if(w.minGap<=OPT.magnetReach && player&&dist(player,w.pos)<=OPT.magnetReach+1){
+          if(finalOnly){
+            // 倒數最後15秒不要花時間返點；繼續等下一顆磁鐵。
+            round.finalPicked++;
+            round.blocked.push({pos:[...w.pos],until:now+12000});
+            round.target=null;round.magnetObserved=null;round.bestGap=Infinity;move();
+            status('Boss最後15秒｜已撿磁鐵 '+round.finalPicked+' 顆，繼續尋找');return;
+          }
           status('磁鐵接近後消失，暫判已拾取，返回原點');
           returnHome(round.part,now);return;
         }
@@ -256,6 +265,10 @@
     }
     const chosen=chooseMagnet(now);
     if(!chosen){round.target=null;round.magnetObserved=null;
+      if(finalOnly){
+        // 只偵測磁鐵：不能執行隨機巡走，也不能重新返點。
+        move();status('Boss最後15秒｜只找磁鐵，暫無目標（不巡走／不返點）');return;
+      }
       if(inBossPhase()){
         returnHome(round.part,now);status('Boss階段沒有磁鐵，返點打王並繼續偵測');return;
       }
@@ -338,6 +351,19 @@
   function inBossPhase(){
     return round.started && (round.bossCountdown || round.seconds>=14*60);
   }
+  function isFinalBossSweep(){
+    // 用 Boss 倒數 HUD 原始秒數判斷，不能把正常開局的 0:15 誤當成最後15秒。
+    return round.started && round.bossCountdown &&
+      Number.isFinite(round.rawSeconds) && round.rawSeconds>=0 &&
+      round.rawSeconds<=OPT.finalBossSeconds;
+  }
+  function startFinalBossSweep(now){
+    // 就算原本在返點、一般磁鐵追蹤、或定點打王，最後15秒一律切到只找磁鐵。
+    move();round.mode='final';round.part='final';round.seekAt=now;
+    round.target=null;round.magnetObserved=null;round.bestGap=Infinity;
+    round.progressAt=now;round.detours=0;round.detourUntil=0;
+    status('Boss倒數 '+round.rawSeconds+' 秒｜只找磁鐵、不再返點');
+  }
   const magnetSchedule=(()=>{
     const times=[...OPT.magnetMinutes];
     for(let t=OPT.repeatStartS;t<=OPT.repeatLastS;t+=OPT.repeatEveryS)times.push(t);
@@ -379,6 +405,10 @@
     if(busy()||document.activeElement?.matches?.('input,textarea,select,[contenteditable="true"]')){
       move();return;
     }
+    if(isFinalBossSweep()){
+      if(round.mode!=='final')startFinalBossSweep(now);
+      seekMagnet(now);return;
+    }
     if(round.failed){move();return;}
     if(round.mode==='return'){driveHome(now);return;}
     if(round.mode==='seek'){seekMagnet(now);return;}
@@ -390,7 +420,7 @@
       for(const m of magnetSchedule){
         if(round.completed.has(m)||round.seconds<m)continue;
         // 過時的採集不補做，以免長時間追磁鐵後錯過下一個指定窗口。
-        if(round.seconds-m>OPT.missedWindowS){round.completed.add(m);if(m===360)round.sixComplete=true;continue;}
+        if(round.seconds-m>OPT.missedWindowS){round.completed.add(m);if(m===355)round.sixComplete=true;continue;}
         beginMagnet(m,now);return;
       }
       // 固定時窗以外，Boss 戰鬥期間只要小地圖又出現磁鐵就會再去撿。
@@ -403,7 +433,7 @@
       const next=magnetSchedule.find(m=>!round.completed.has(m)&&m>round.seconds);
       status(inBossPhase()?'Boss定點輸出中＋持續監看磁鐵':
         next===undefined?'原地刷怪｜等待Boss磁鐵':
-        '原地刷怪｜下次磁鐵 '+Math.floor(next/60)+':'+String(next%60).padStart(2,'0'));
+        '原地刷怪｜下次磁鐵 '+formatTime(next));
       return;
     }
     move();
@@ -418,7 +448,7 @@
     enabled=true;if(remember)try{sessionStorage.setItem(ENABLE_KEY,'1');}catch{}
     button.style.background='#186442';status('開｜等待下一場開局');
     clearInterval(interval);interval=setInterval(()=>{
-      try{loop();}catch(err){move();status('錯誤：已停止移動');console.error('[HANS 巡走 2.2.1]',err);}
+      try{loop();}catch(err){move();status('錯誤：已停止移動');console.error('[HANS 巡走 2.3.0]',err);}
     },OPT.tickMs);
   }
   button.onclick=()=>enabled?stop():start();

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HANS RO 戰利品全紀錄｜金色通知＋每場總表
 // @namespace    ro-local-loot-journal
-// @version      0.6.2
+// @version      0.6.3
 // @description  HANS 選關＋戰利品：自動向下掃描全部遠征關卡，右下角切換目標；結算封存再重進、難度與戰利品統計。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.6.2';
+  const VERSION = '0.6.3';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -557,9 +557,9 @@
     ui.style.cssText='position:fixed;right:7px;bottom:8px;z-index:2147483647;max-width:calc(100vw - 14px);'+
       'font:12px/1.45 system-ui,sans-serif;color:#fff;background:#203452f0;border:1px solid #98b5db;'+
       'border-radius:8px;padding:6px;box-shadow:0 3px 12px #0007';
-    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.6.2 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
+    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.6.3 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
       <div id="roj4-menu" hidden style="width:265px;max-width:80vw;max-height:60vh;overflow-y:auto;padding-top:6px">
-        <div style="font-size:10px;opacity:.78">HANS 整合 v0.6.2 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
+        <div style="font-size:10px;opacity:.78">HANS 整合 v0.6.3 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
         <div id="roj4-discord">Discord：開｜待送 0</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
           <button id="roj4-toggle">暫停紀錄</button><button id="roj4-notify">關閉 DC</button>
@@ -1028,7 +1028,7 @@
     const previewMatch=hits(stage.re).some(rightPreview);
     const otherPreview=Object.entries(STAGES).some(([id,s])=>id!==picker.value && hits(s.re).some(rightPreview));
     // 如果右邊明顯顯示另一個副本，即使左邊的卡片有「已選」樣式也不信任。
-    const confirmed=previewMatch || (!otherPreview && selectedStage(row));
+    const confirmed=previewMatch || (!otherPreview && selectedStage(row.el));
     const depart=findControl(W.depart);
     if(confirmed && depart){
       if(departAt && Date.now()-departAt<10000){tell('已按出發，等待難度視窗');return;}

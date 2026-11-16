@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HANS RO｜開局巡走＋2／3／6分鐘磁鐵＋Lv120免翻牌
 // @namespace    hunghung-ro-local-tools
-// @version      2.0.0
+// @version      2.0.1
 // @description  HANS 專用：開局前60秒巡走練級，回開場點定點輸出，2:00/3:00/6:00各找一次磁鐵並返點，六分鐘採集結束且Lv120起點「之後不再翻牌」。原選關重進由戰利品整合版負責。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-idle
@@ -277,8 +277,15 @@
     stop.click();round.skipClicked=true;
     status('Lv'+info.level+'｜已按之後不再翻牌');
   }
+  function shortThreeMinuteModeEnabled(){
+    try{return JSON.parse(localStorage.getItem('hans-ro-stage-loot-short3-v070')||'{}')?.enabled===true;}
+    catch{return false;}
+  }
   function loop(){
     if(!enabled||document.hidden)return;
+    if(shortThreeMinuteModeEnabled()){
+      move();status('右下「3分鐘刷卡」仍開：請先關閉，否則無法完成6分鐘磁鐵行程');return;
+    }
     const now=timeNow();
     if(!disableOldGather()){move();return;}
     const next=document.querySelector('#minimap canvas');
@@ -335,7 +342,7 @@
     enabled=true;if(remember)try{sessionStorage.setItem(ENABLE_KEY,'1');}catch{}
     button.style.background='#186442';status('開｜等待下一場開局');
     clearInterval(interval);interval=setInterval(()=>{
-      try{loop();}catch(err){move();status('錯誤：已停止移動');console.error('[HANS 巡走 2.0.0]',err);}
+      try{loop();}catch(err){move();status('錯誤：已停止移動');console.error('[HANS 巡走 2.0.1]',err);}
     },OPT.tickMs);
   }
   button.onclick=()=>enabled?stop():start();

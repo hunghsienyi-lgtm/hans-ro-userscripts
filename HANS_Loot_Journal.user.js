@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.8.8
-// @description  v0.8.8：修復 Tampermonkey 下滾事件建構可能拋錯、移除跨環境 view 參數、加入安全備援及面板即時錯誤原因。
+// @version      0.8.9
+// @description  v0.8.9：文字重進新增四周目（・改³）關卡偵測、周目切換及五張已知關卡候選；保留既有自動縮放與戰利品功能。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.8.8';
+  const VERSION = '0.8.9';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -768,7 +768,7 @@
   };
   const CATALOG_KEY='hh-ro-stage-catalog-v062', SELECT_KEY='hh-ro-dungeon-v16';
   const WORLD_KEY='hh-ro-expedition-world-v080', WORLD_TARGETS_KEY='hh-ro-world-targets-v080';
-  const WORLD_NAMES={1:'一周目',2:'二周目',3:'三周目'};
+  const WORLD_NAMES={1:'一周目',2:'二周目',3:'三周目',4:'四周目'};
   const worldSelections=(()=>{try{const v=JSON.parse(localStorage.getItem(WORLD_TARGETS_KEY)||'{}');return v&&typeof v==='object'?v:{}}catch{return {}}})();
   if(!worldSelections['1'])try{worldSelections['1']=localStorage.getItem(SELECT_KEY)||'cave'}catch{worldSelections['1']='cave'}
   let initialWorld=1;try{const w=Number(localStorage.getItem(WORLD_KEY));if(WORLD_NAMES[w])initialWorld=w}catch{}
@@ -779,11 +779,12 @@
   })();
   const namePattern=name=>new RegExp('^'+[...norm(name)].map(ch=>
     /[\p{L}\p{N}]/u.test(ch)?ch:'\\'+ch).join('')+'$','i');
-  // 2026 HANS 遠征：一周目原名、二周目「・改」、三周目「・改²」。
-  // norm 會把上標²轉成2，因此所有比較都採同一正規化口徑；顯示文字保留原來的²。
-  const REFORM_MARK=/[・･·‧•∙．]改(?:2)?$/u;
+  // 2026 HANS 遠征周目：一周目原名、二周目「・改」、三周目「・改²」、四周目「・改³」。
+  // norm 採 NFKC：上標²、³ 正規化成 2、3，顯示與比對分開處理。
+  const REFORM_MARK=/[・･·‧•∙．]改(?:[23])?$/u;
   function stageNameWorld(name){
     const n=norm(name);
+    if(/[・･·‧•∙．]改3$/u.test(n))return 4;
     if(/[・･·‧•∙．]改2$/u.test(n))return 3;
     if(/[・･·‧•∙．]改$/u.test(n))return 2;
     return 1;
@@ -791,8 +792,8 @@
   function baseStageName(name){return norm(name).replace(REFORM_MARK,'');}
   function stageFitsWorld(name,world){return stageNameWorld(name)===Number(world);}
   function stageLabelForWorld(base,world){
-    // 用於診斷／提示，實際選關名稱仍以遊戲畫面掃到的文字為準。
-    return base+(world===2?'・改':world===3?'・改²':'');
+    // 保留原來的上標，實際點選仍以畫面掃到的完整關卡名稱、周目和解鎖狀態為準。
+    return base+(world===2?'・改':world===3?'・改²':world===4?'・改³':'');
   }
 
   const chosenWorld=()=>Number(worldPicker.value)||1;
@@ -824,13 +825,13 @@
     STAGES[key].verified=true;
     redrawStageChoices();return key;
   }
-  // 用已知地圖的原名推導二／三周目選關候選，無須先人工捲完清單。
+  // 用已知地圖的原名推導一至四周目選關候選，無須先人工捲完清單。
   // 候選本身不代表已解鎖；真正出征前仍須在該周目看到相同名稱、Lv 與可挑戰。
   function seedKnownStageCandidates(){
     const bases=new Set(Object.values(STAGES).map(x=>baseStageName(x.name)));
     for(const base of bases){
       if(!base||base.length<2||base.length>40)continue;
-      for(const world of [1,2,3]){
+      for(const world of [1,2,3,4]){
         const name=stageLabelForWorld(base,world),key='hans:w'+world+':'+norm(name);
         if(Object.values(STAGES).some(x=>x.world===world&&norm(x.name)===norm(name)))continue;
         STAGES[key]={name,re:namePattern(name),unlocked:null,level:'',world,verified:false};
@@ -852,7 +853,7 @@
         const rect=rct(p),cx=rect.left+rect.width/2,text=String(p.textContent||'');
         if(cx>innerWidth*.48||rect.width>innerWidth*.55)break;
         if(rect.width<115||rect.height<48||rect.height>175||text.length>350||!levelPattern.test(text))continue;
-        // 文字顯示要保留三周目的上標「²」，不能把品名直接 NFKC 成「改2」。
+        // 顯示保留三／四周目上標「²／³」，內部比對再採 NFKC 正規化。
         const leaves=[...p.querySelectorAll('*')].filter(x=>x.childElementCount===0)
           .map(x=>String(x.textContent||'').trim()).filter(Boolean);
         const title=leaves.find(x=>x.length>=2&&x.length<=40&&/[\p{L}]/u.test(x)
@@ -979,9 +980,22 @@
     if(item&&typeof item.name==='string')rememberStage(item.name,item.unlocked!==false,item.level||'',Number(item.world)||1);
   }
   const oldTarget=worldSelections['1'];
-  if(oldTarget&&!STAGES[oldTarget]&&oldTarget.startsWith('hans:')&&!/^hans:w[123]:/.test(oldTarget)){
+  if(oldTarget&&!STAGES[oldTarget]&&oldTarget.startsWith('hans:')&&!/^hans:w[1234]:/.test(oldTarget)){
     rememberStage(oldTarget.slice(5),true,'',1);
     worldSelections['1']='hans:w1:'+norm(oldTarget.slice(5));
+  }
+  // 四周目：依使用者 2026-11-17 截圖列入五個關卡選項。
+  // 初始標示為待確認，不把截圖時間的已通關狀態當作當前頁面可出征證據。
+  // 真正進場前仍要掃到四周目相同名稱與當下的解鎖狀態才可按出發。
+  for(const [name,level] of [
+    ['普隆德拉地下水道・改³','9-12'],
+    ['失事輪・改³','13-15'],
+    ['柏伊亞嵐島・改³','16-20'],
+    ['斐揚森林・改³','21-25'],
+    ['斐揚洞穴・改³','26-30']
+  ]){
+    if(Object.values(STAGES).some(x=>x.world===4&&norm(x.name)===norm(name)))continue;
+    STAGES['hans:w4:'+norm(name)]={name,re:namePattern(name),unlocked:null,level,world:4,verified:false};
   }
   seedKnownStageCandidates();
 
@@ -1626,12 +1640,13 @@
     const tabs={};
     for(const el of document.querySelectorAll('button,[role="button"]')){
       if(hud.contains(el)||!shown(el))continue;
-      const m=norm(el.textContent||'').match(/^([一二三123])[周週]目$/);
+      const m=norm(el.textContent||'').match(/^([一二三四1234])[周週]目$/);
       if(!m)continue;
-      const id={'一':1,'二':2,'三':3,'1':1,'2':2,'3':3}[m[1]];
+      const id={'一':1,'二':2,'三':3,'四':4,'1':1,'2':2,'3':3,'4':4}[m[1]];
       if(id&&!tabs[id])tabs[id]=el;
     }
-    return Object.keys(tabs).length===3?tabs:null;
+    // 舊帳號可能尚未開四周目，仍支援原三周目；四周目若不存在不會誤點其他按鈕。
+    return tabs[1]&&tabs[2]&&tabs[3]?tabs:null;
   }
   function selectedWorldFromTabs(tabs){
     if(!tabs)return 1;
@@ -1672,7 +1687,7 @@
     const state=currentWorldState(),wanted=chosenWorld();
     if(!state.available){
       if(wanted===1)return true;
-      tell('找不到二／三周目切換鈕，暫不出征');return false;
+      tell('找不到目標周目切換鈕，暫不出征');return false;
     }
     if(state.world===wanted){
       if(worldClickAt&&Date.now()-worldClickAt<650){tell('等待周目切換完成');return false;}
@@ -1682,6 +1697,7 @@
     if(state.world===null&&(attempts.world||0)>0){
       tell('周目選取狀態無法確認，暫不出征，避免掛錯周目');return false;
     }
+    if(!state.tabs?.[wanted]){tell(WORLD_NAMES[wanted]+'尚未出現在遠征周目按鈕，停止自動進場');return false;}
     if(action('world',state.tabs[wanted],WORLD_NAMES[wanted],2,1200)){
       worldClickAt=Date.now();
       resetCatalog();catalog.world=null;

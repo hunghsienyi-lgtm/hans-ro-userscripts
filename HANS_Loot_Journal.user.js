@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.9.4
-// @description  v0.9.4：新增清背包賣裝「只讀模擬」：預設關閉、每場結束觸發、五品質候選與保護排除，無任何真正販賣操作。
+// @version      0.9.5
+// @description  v0.9.5：清背包只讀模擬，預設關閉；修正關閉時手動預覽報告顯示及手動完成本場待辦；不執行實際販賣。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.9.4';
+  const VERSION = '0.9.5';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -1143,7 +1143,7 @@
   });
   updateShortControls();
 
-  // 自動清背包賣裝 v0.9.4：只讀模擬。
+  // 自動清背包賣裝 v0.9.5：只讀模擬。
   // 嚴禁點擊商人的「一鍵販賣」、商品、勾選框或確認按鈕；
   // 此版只允許讀取已開啟的商人介面、顯示預估數量和記錄待處理狀態。
   const SELL_DRY_ENABLED_KEY='hans-ro-sell-dry-enabled-v094';
@@ -1202,7 +1202,7 @@
     sellToggle.textContent='清背包：'+(sellDryEnabled?'開':'關')+'（模擬）';
     sellToggle.style.background=sellDryEnabled?'#165e54':'#5c6b82';
     sellSkipButton.hidden=!sellDryPending;
-    if(!sellDryEnabled)sellNote('功能關閉，無販賣操作');
+    if(!sellDryEnabled&&!sellLastReport)sellNote('功能關閉，無販賣操作');
     else if(sellDryPending&&!sellLastReport)sellNote('本場待模擬：回城後手動開啟商人「販賣」頁');
     else if(!sellLastReport)sellNote('每場結束觸發；僅讀取已開啟的商人頁');
   }
@@ -1290,7 +1290,7 @@
       (report.qualitySum??'不完整')+'｜安全可賣：未確認｜實際販賣 0'+
       (warnings.length?'｜注意：'+warnings.join('、'):''));
     console.info('[HANS 清背包／只讀模擬] 未操作商人與商品；報告',report);
-    if(auto){sellDryPending=false;saveSellDryPending();}
+    if(auto||sellDryPending){sellDryPending=false;saveSellDryPending();}
     updateSellDryControls();
     return true;
   }

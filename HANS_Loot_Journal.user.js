@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.8.9
-// @description  v0.8.9：文字重進新增四周目（・改³）關卡偵測、周目切換及五張已知關卡候選；保留既有自動縮放與戰利品功能。
+// @version      0.9.0
+// @description  v0.9.0：四周目不限截圖五關，進入四周目自動捲動掃描整份關卡清單並動態加入新關卡，保留已解鎖檢查與既有功能。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.8.9';
+  const VERSION = '0.9.0';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -873,6 +873,8 @@
   }
   const catalog={running:false,complete:false,scroll:null,steps:0,observed:new Set(),
     searchName:'',searchSteps:0,searchAt:0,topReadyAt:0,topConfirmed:false,world:null,worldAt:0};
+  // 每次頁面載入在四周目至少完成一次「從頂端到最底端」掃描；切換周目不重複掃同一批。
+  const completedWorldScans=new Set();
   function resetCatalog(){
     Object.assign(catalog,{running:false,complete:false,scroll:null,steps:0,observed:new Set(),
       searchName:'',searchSteps:0,searchAt:0,topReadyAt:0,topConfirmed:false});
@@ -902,45 +904,66 @@
   function scanAllStages(world){
     if(!catalog.complete&&!catalog.running){
       catalog.running=true;catalog.steps=0;catalog.observed=new Set();
-      catalog.topConfirmed=false;catalog.topReadyAt=Date.now()+450;
-      // 無論目前捲到哪裡，都先從關卡列表最上方開始掃描，不漏掉以前的低等關卡。
+      catalog.topConfirmed=false;catalog.topReadyAt=Date.now()+550;
+      // 掃描目前遊戲所顯示的完整四周目清單；不是固定五關，也不捏造未出現的關卡。
       catalog.scroll=findListScroll(stageRows());
       if(catalog.scroll)catalog.scroll.scrollTop=0;
     }
     if(!catalog.running)return;
     const el=catalog.scroll;
-    // 捲回頂端後等待虛擬化清單更新。不能同一個 tick 就往下移，否則會漏掉最前面的卡片。
+    if(!el || !el.isConnected){
+      catalog.running=false;catalog.complete=false;
+      tell('四周目清單尚未找到可捲動區，稍後重試；不會誤判掃描完成');return;
+    }
+    // 從頂端開始，等待虛擬清單渲染，不在同一個 tick 立即往下跳。
     if(!catalog.topConfirmed){
-      if(!el){catalog.running=false;catalog.complete=false;
-        tell('無法定位遠征清單捲動區，暫不宣稱已掃描全部關卡');return;}
-      if(el.scrollTop>2){el.scrollTop=0;catalog.topReadyAt=Date.now()+450;return;}
+      if(el.scrollTop>2){el.scrollTop=0;catalog.topReadyAt=Date.now()+550;return;}
       if(Date.now()<catalog.topReadyAt)return;
       catalog.topConfirmed=true;
     }
-    const rows=readStageCatalog(world);
-    if(!el||catalog.steps>=70||el.scrollTop>=el.scrollHeight-el.clientHeight-3){
-      catalog.running=false;catalog.complete=true;
-      if(el)el.scrollTop=0;
-      tell('關卡清單已掃描 '+catalog.observed.size+' 個，選取後可自動重進');
+    readStageCatalog(world);
+    const bottom=Math.max(0,el.scrollHeight-el.clientHeight);
+    if(el.scrollTop>=bottom-3){
+      catalog.running=false;catalog.complete=true;completedWorldScans.add(world);
+      el.scrollTop=0;
+      tell(WORLD_NAMES[world]+'已完整掃描 '+catalog.observed.size+' 個關卡；可選擇清單中的任何關卡');
+      return;
+    }
+    if(catalog.steps>=140){
+      // 超過捲動上限屬於不完整掃描，保留既有候選但不宣稱已完成。
+      catalog.running=false;catalog.complete=false;completedWorldScans.add(world);
+      el.scrollTop=0;
+      tell(WORLD_NAMES[world]+'掃描超過上限，已發現 '+catalog.observed.size+' 關；未宣稱全部掃完');
       return;
     }
     const before=el.scrollTop;
-    el.scrollTop=Math.min(el.scrollHeight-el.clientHeight,before+Math.max(110,el.clientHeight*.72));
+    el.scrollTop=Math.min(bottom,before+Math.max(110,el.clientHeight*.66));
+    if(el.scrollTop<=before+1){
+      // 捲動已停止，可能內容尚未刷新；不要將清單猜成只有五關。
+      catalog.running=false;catalog.complete=false;
+      tell('關卡列表無法繼續捲動，保留已發現的 '+catalog.observed.size+' 關，稍後可重試');
+      return;
+    }
     catalog.steps++;
-    if(el.scrollTop<=before+1)catalog.steps=70;
+    tell('正在掃描'+WORLD_NAMES[world]+'所有關卡：目前 '+catalog.observed.size+' 關（'+catalog.steps+'段）');
   }
   function stageExplorerTick(){
     if(!expeditionOpen()){resetCatalog();catalog.world=null;return;}
     if(worldClickAt&&Date.now()-worldClickAt<700)return; // 等周目切換動畫與列表更新
     const tab=currentWorldState();
     if(tab.world===null){
-      tell('關卡周目尚未辨識，等待畫面載入（不需手動掃描）');return;
+      tell('關卡周目尚未辨識，等待畫面載入');return;
     }
     if(catalog.world!==tab.world){
       resetCatalog();catalog.world=tab.world;catalog.worldAt=Date.now();
     }
-    // 只記錄目前遊戲已顯示的關卡。後續若選到較後方的地圖，才定向捲動尋找。
-    readStageCatalog(tab.world);
+    // 四周目每次頁面載入第一次看到清單時，從頂端完整掃到最下方。
+    // 所有其他關卡（含未解鎖）都會依遊戲實際卡片加入下拉清單。
+    if(tab.world===4 && !completedWorldScans.has(4)){
+      scanAllStages(4);
+      return;
+    }
+    if(!catalog.running)readStageCatalog(tab.world);
   }
 
   const rct = el => el.getBoundingClientRect();
@@ -1754,7 +1777,11 @@
     phase('expedition');
     if(!ensureWorldTab())return;
     if(catalog.world!==chosenWorld()){stageExplorerTick();return;}
-    // 不再要求捲完所有周目關卡。選到尚未顯示的地圖才由 seekStage 定向搜尋。
+    // 四周目首次進入，必須先讀取完整遊戲關卡列表；掃描時避免與 seekStage 爭奪捲動位置。
+    if(chosenWorld()===4 && catalog.running){
+      tell('正在收錄四周目完整關卡清單：'+catalog.observed.size+' 關');return;
+    }
+    // 掃描後才針對使用者選定關卡進行定向搜尋和出征確認。
     const stage=targetStage();
     if(!stage){tell('請先選擇'+WORLD_NAMES[chosenWorld()]+'的關卡，暫不出征');return;}
     if(stage.unlocked===false){tell('尚未解鎖：'+stage.name);return;}

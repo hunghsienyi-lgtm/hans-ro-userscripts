@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.9.3
-// @description  v0.9.3：支援五周目／改⁴完整關卡清單與重進；維持原有四周目全清單、自動2×及戰利品功能。
+// @version      0.9.4
+// @description  v0.9.4：新增清背包賣裝「只讀模擬」：預設關閉、每場結束觸發、五品質候選與保護排除，無任何真正販賣操作。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.9.3';
+  const VERSION = '0.9.4';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -1142,6 +1142,186 @@
     tell('三分鐘刷卡調整為 3:00 +'+shortPrefs.grace+'秒');
   });
   updateShortControls();
+
+  // 自動清背包賣裝 v0.9.4：只讀模擬。
+  // 嚴禁點擊商人的「一鍵販賣」、商品、勾選框或確認按鈕；
+  // 此版只允許讀取已開啟的商人介面、顯示預估數量和記錄待處理狀態。
+  const SELL_DRY_ENABLED_KEY='hans-ro-sell-dry-enabled-v094';
+  const SELL_DRY_PENDING_KEY='hans-ro-sell-dry-pending-v094';
+  const SELL_DRY_RARITIES=Object.freeze(['普通','優良','稀有','史詩','傳說']);
+  const SELL_DRY_EXCLUSIONS=Object.freeze(['已裝備','已鎖定','已插卡','已精煉','卡片']);
+  let sellDryEnabled=false; // 全新功能預設關閉，不繼承其他腳本的任何售賣設定
+  try{sellDryEnabled=localStorage.getItem(SELL_DRY_ENABLED_KEY)==='1'}catch{}
+  let sellDryPending=false,sellResultSeen=false,sellLastReport=null;
+  try{
+    const record=JSON.parse(sessionStorage.getItem(SELL_DRY_PENDING_KEY)||'null');
+    sellDryPending=!!(sellDryEnabled&&record?.pending&&Date.now()-Number(record.time||0)<1800000);
+  }catch{}
+  const sellPanel=document.createElement('section');
+  sellPanel.id='hans-sell-dry-panel';
+  sellPanel.style.cssText='margin-top:6px;border-top:1px solid #8ca6c0;padding-top:6px;font:11px/1.45 sans-serif;color:#eef5ff';
+  const sellControls=document.createElement('div');
+  sellControls.style.cssText='display:flex;flex-wrap:wrap;align-items:center;gap:4px';
+  const sellToggle=document.createElement('button');
+  sellToggle.type='button';sellToggle.id='hans-sell-dry-toggle';
+  sellToggle.style.cssText='padding:4px 7px;border:1px solid #c9dbed;border-radius:5px;font:bold 11px sans-serif;color:#fff;cursor:pointer';
+  sellToggle.title='預設關閉。開啟後每場結束會暫停自動重進並等待手動打開商人介面，僅產生模擬報告，不販賣。';
+  const sellPreviewButton=document.createElement('button');
+  sellPreviewButton.type='button';sellPreviewButton.id='hans-sell-dry-preview';
+  sellPreviewButton.textContent='預覽商人清單';
+  sellPreviewButton.style.cssText='padding:4px 7px;background:#416a90;border:1px solid #c9dbed;border-radius:5px;color:white;font:11px sans-serif;cursor:pointer';
+  const sellSkipButton=document.createElement('button');
+  sellSkipButton.type='button';sellSkipButton.id='hans-sell-dry-skip';
+  sellSkipButton.textContent='跳過本場';
+  sellSkipButton.style.cssText='padding:4px 7px;background:#665866;border:1px solid #c9dbed;border-radius:5px;color:white;font:11px sans-serif;cursor:pointer';
+  sellSkipButton.hidden=true;
+  const sellInfo=document.createElement('div');
+  sellInfo.id='hans-sell-dry-info';
+  sellInfo.style.cssText='margin-top:4px;overflow-wrap:anywhere';
+  const sellDetails=document.createElement('details');
+  const sellSummary=document.createElement('summary');
+  sellSummary.textContent='模擬規則與保護條件';
+  sellDetails.append(sellSummary);
+  const sellRules=document.createElement('div');
+  sellRules.style.cssText='font:10px/1.4 sans-serif;margin-top:3px;color:#d5e6f4';
+  sellRules.textContent='觸發：每場正常結束｜允許品質：'+SELL_DRY_RARITIES.join('、')+
+    '｜一律排除：'+SELL_DRY_EXCLUSIONS.join('、')+
+    '｜只讀模式：不移動、不選取、不賣出。未取得逐件保護狀態時，安全可賣數量維持「未確認」。';
+  sellDetails.append(sellRules);
+  sellControls.append(sellToggle,sellPreviewButton,sellSkipButton);
+  sellPanel.append(sellControls,sellInfo,sellDetails);
+
+  function saveSellDryPending(){
+    try{
+      if(sellDryPending)sessionStorage.setItem(SELL_DRY_PENDING_KEY,JSON.stringify({pending:true,time:Date.now()}));
+      else sessionStorage.removeItem(SELL_DRY_PENDING_KEY);
+    }catch{}
+  }
+  function sellNote(message){const text='賣裝模擬：'+message;if(sellInfo.textContent!==text)sellInfo.textContent=text;}
+  function updateSellDryControls(){
+    sellToggle.textContent='清背包：'+(sellDryEnabled?'開':'關')+'（模擬）';
+    sellToggle.style.background=sellDryEnabled?'#165e54':'#5c6b82';
+    sellSkipButton.hidden=!sellDryPending;
+    if(!sellDryEnabled)sellNote('功能關閉，無販賣操作');
+    else if(sellDryPending&&!sellLastReport)sellNote('本場待模擬：回城後手動開啟商人「販賣」頁');
+    else if(!sellLastReport)sellNote('每場結束觸發；僅讀取已開啟的商人頁');
+  }
+  sellToggle.addEventListener('click',()=>{
+    sellDryEnabled=!sellDryEnabled;
+    try{localStorage.setItem(SELL_DRY_ENABLED_KEY,sellDryEnabled?'1':'0')}catch{}
+    if(!sellDryEnabled){sellDryPending=false;saveSellDryPending();}
+    sellLastReport=null;updateSellDryControls();
+  });
+  sellSkipButton.addEventListener('click',()=>{
+    sellDryPending=false;saveSellDryPending();sellLastReport=null;
+    updateSellDryControls();sellNote('已跳過本場，未販賣任何裝備');
+  });
+
+  // 只讀尋找商人的「一鍵販賣」設定區。其他遊戲商店或腳本的按鈕不符合條件。
+  function findSellDryMerchantPanel(){
+    const labels=document.querySelectorAll('div,span,label,b,strong');
+    for(const leaf of labels){
+      if(leaf.childElementCount>1||!shown(leaf)||hud.contains(leaf)||
+        leaf.closest('#'+UI_ID+',#hans-independent-zoom-panel'))continue;
+      const heading=norm(leaf.textContent||'');
+      if(heading.length>24||!heading.includes('一鍵販賣'))continue;
+      for(let root=leaf,depth=0;root&&depth<8;root=root.parentElement,depth++){
+        if(root===document.body)break;
+        const text=String(root.innerText||root.textContent||'');
+        if(text.length>9000)break;
+        if(text.includes('一鍵販賣') && text.includes('普通')&&text.includes('優良') &&
+          text.includes('傳說') && /包含已插卡|已插卡/u.test(text) &&
+          /包含已精煉|已精煉/u.test(text))return root;
+      }
+    }
+    return null;
+  }
+
+  // 由商人介面的「一鍵販賣」列讀品質計數，不讀取卡片數、不勾選任何東西。
+  // 品質計數只是遊戲 UI 的候選摘要，不代表每件都已驗證裝備/鎖定/插卡/精煉屬性。
+  function readSellDryQualityCounts(merchant){
+    const text=String(merchant.innerText||merchant.textContent||'').normalize('NFKC');
+    const pos=text.indexOf('一鍵販賣');
+    const area=(pos>=0?text.slice(pos,pos+550):'').replace(/\s+/g,'');
+    const counts={},missing=[];
+    for(const grade of SELL_DRY_RARITIES){
+      const match=area.match(new RegExp(grade+'(\\d+)','u'));
+      if(match)counts[grade]=Number(match[1]);
+      else missing.push(grade);
+    }
+    return {counts,missing,source:area.slice(0,200)};
+  }
+  function readSellDryCheck(merchant,keyword){
+    const labels=merchant.querySelectorAll('label');
+    for(const el of labels){
+      if(!norm(el.textContent||'').includes(keyword))continue;
+      let checkbox=el.querySelector('input[type="checkbox"]');
+      if(!checkbox&&el.htmlFor){
+        const linked=document.getElementById(el.htmlFor);
+        if(linked?.type==='checkbox')checkbox=linked;
+      }
+      if(checkbox)return checkbox.checked===true;
+    }
+    return null; // 未能證明開關關閉時，不將物品列為可安全售出
+  }
+  function previewSellDryMerchant(auto=false){
+    const merchant=findSellDryMerchantPanel();
+    if(!merchant){
+      sellNote('找不到商人「販賣」頁；請手動開啟，再按「預覽商人清單」');
+      return false;
+    }
+    const data=readSellDryQualityCounts(merchant);
+    const carded=readSellDryCheck(merchant,'包含已插卡');
+    const refined=readSellDryCheck(merchant,'包含已精煉');
+    const summary=SELL_DRY_RARITIES.map(g=>g+' '+(Number.isFinite(data.counts[g])?data.counts[g]:'?')).join('｜');
+    const observed=Object.values(data.counts).reduce((a,n)=>a+n,0);
+    // 不以品質合計值冒充「安全可賣」：缺少逐件的裝備/保護/插卡/精煉判斷。
+    const warnings=[];
+    if(data.missing.length)warnings.push('缺少品質數量：'+data.missing.join('、'));
+    if(carded!==false)warnings.push(carded===true?'商人含已插卡已勾選':'無法確認排除插卡狀態');
+    if(refined!==false)warnings.push(refined===true?'商人含已精煉已勾選':'無法確認排除精煉狀態');
+    const report={at:new Date().toISOString(),type:'dry-run',trigger:auto?'每場結束':'手動預覽',
+      allowed:[...SELL_DRY_RARITIES],excluded:[...SELL_DRY_EXCLUSIONS],
+      counts:data.counts,qualitySum:data.missing.length?null:observed,
+      safeToSell:'未確認（逐件保護資訊不足）',
+      warnings,actualSold:0};
+    sellLastReport=report;
+    sellNote((auto?'每場結束':'手動')+'模擬完成｜'+summary+'｜品質候選合計：'+
+      (report.qualitySum??'不完整')+'｜安全可賣：未確認｜實際販賣 0'+
+      (warnings.length?'｜注意：'+warnings.join('、'):''));
+    console.info('[HANS 清背包／只讀模擬] 未操作商人與商品；報告',report);
+    if(auto){sellDryPending=false;saveSellDryPending();}
+    updateSellDryControls();
+    return true;
+  }
+  sellPreviewButton.addEventListener('click',()=>previewSellDryMerchant(false));
+  function markSellDryAtResult(){
+    if(!sellDryEnabled||sellDryPending)return;
+    sellDryPending=true;sellLastReport=null;
+    saveSellDryPending();updateSellDryControls();
+    sellNote('本場已結束；等待回城手動開啟商人頁，僅模擬不販賣');
+  }
+  let sellDryPollLast=0;
+  function sellDryTick(){
+    if(document.hidden||!sellDryEnabled)return;
+    const now=Date.now();
+    // 結算畫面觸發一次，進下一場時再解除同局旗標。
+    if(resultVisible()){
+      if(!sellResultSeen){sellResultSeen=true;markSellDryAtResult();}
+    }else{
+      const mini=document.querySelector('#minimap');
+      if(mini&&shown(mini))sellResultSeen=false;
+    }
+    if(sellDryPending && now-sellDryPollLast>1100){
+      sellDryPollLast=now;
+      if(findSellDryMerchantPanel())previewSellDryMerchant(true);
+    }
+  }
+  updateSellDryControls();
+  setInterval(()=>{
+    try{sellDryTick()}catch(e){console.warn('[HANS 清背包模擬] 掃描失敗',e);}
+  },850);
+
   // 所有元件完成初始化後才顯示：選關、重進與 3 分鐘模式必須同時在右下角出現。
   btn.id='hans-auto-reentry-toggle';
   picker.id='hans-auto-stage-picker';
@@ -1241,9 +1421,9 @@
       if(mapReadyForZoom())queueZoom();
     }
   });
-  hud.append(btn,worldPicker,picker,shortGroup,shortHelp,msg);
+  hud.append(btn,worldPicker,picker,shortGroup,shortHelp,sellPanel,msg);
   mountStageIntoLootPanel();
-  const uiElements=[btn,worldPicker,picker,shortToggle,shortGrace];
+  const uiElements=[btn,worldPicker,picker,shortToggle,shortGrace,sellToggle,sellPreviewButton];
   if(uiElements.some(el=>!hud.contains(el)) || hud.parentElement?.id!=='roj4-menu'){
     throw new Error('右下角選關／3分鐘刷卡元件未能正常掛載');
   }
@@ -1967,9 +2147,20 @@
       const back=findControl(W.back);
       if(back){phase('result');
         if(!stageLootBridge.readyToLeave()){tell('結算辨識與封存中，暫不返回角色');return;}
+        if(sellDryEnabled)markSellDryAtResult(); // 已完成封存，標記這場待模擬；不在結算頁販賣
         action('back',back,'返回角色',3,1500);return;}
       const talk=findControl(W.talk);
-      if(talk){phase('town');action('talk',talk,'與隊長交談',4,1800);return;}
+      if(talk){
+        phase('town');
+        if(sellDryEnabled && sellDryPending){
+          tell('清背包模擬待執行：請手動開啟商人「販賣」頁（不會真的賣裝）；或按「跳過本場」');
+          return;
+        }
+        if(sellDryEnabled && findSellDryMerchantPanel()){
+          tell('商人視窗仍開啟，請手動關閉後再自動重進');return;
+        }
+        action('talk',talk,'與隊長交談',4,1800);return;
+      }
       phase('waiting');tell('等待結算／主城／遠征／難度視窗（目標：'+targetLabel()+'）');
     } catch(e) {tell('偵測錯誤：請截圖並回報');console.error('[HANS 整合選關]',e);}
   }

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.9.2
-// @description  v0.9.2：每場自動切換 2 倍速；只在頂部顯示 1× 時點擊、2× 不操作，新增獨立開關與狀態顯示。
+// @version      0.9.3
+// @description  v0.9.3：支援五周目／改⁴完整關卡清單與重進；維持原有四周目全清單、自動2×及戰利品功能。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.9.2';
+  const VERSION = '0.9.3';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -673,9 +673,9 @@
     ui.style.cssText='position:fixed;right:7px;bottom:8px;z-index:2147483647;max-width:calc(100vw - 14px);'+
       'font:12px/1.45 system-ui,sans-serif;color:#fff;background:#203452f0;border:1px solid #98b5db;'+
       'border-radius:8px;padding:6px;box-shadow:0 3px 12px #0007';
-    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v0.8.4 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
+    ui.innerHTML=`<button type="button" id="roj4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 選關＋戰利品 v${VERSION} 已載入">📦 HANS 選關＋戰利品 <span id="roj4-count">共 0</span> <span id="roj4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
       <div id="roj4-menu" hidden style="width:265px;max-width:80vw;max-height:60vh;overflow-y:auto;padding-top:6px">
-        <div style="font-size:10px;opacity:.78">HANS 整合 v0.8.4 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
+        <div style="font-size:10px;opacity:.78">HANS 整合 v${VERSION} 已載入｜${location.hostname}</div><div id="roj4-state">等待掉寶</div><div id="roj4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
         <div id="roj4-discord">Discord：開｜待送 0</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
           <button id="roj4-toggle">暫停紀錄</button><button id="roj4-notify">關閉 DC</button>
@@ -768,7 +768,7 @@
   };
   const CATALOG_KEY='hh-ro-stage-catalog-v062', SELECT_KEY='hh-ro-dungeon-v16';
   const WORLD_KEY='hh-ro-expedition-world-v080', WORLD_TARGETS_KEY='hh-ro-world-targets-v080';
-  const WORLD_NAMES={1:'一周目',2:'二周目',3:'三周目',4:'四周目'};
+  const WORLD_NAMES={1:'一周目',2:'二周目',3:'三周目',4:'四周目',5:'五周目'};
   const worldSelections=(()=>{try{const v=JSON.parse(localStorage.getItem(WORLD_TARGETS_KEY)||'{}');return v&&typeof v==='object'?v:{}}catch{return {}}})();
   if(!worldSelections['1'])try{worldSelections['1']=localStorage.getItem(SELECT_KEY)||'cave'}catch{worldSelections['1']='cave'}
   let initialWorld=1;try{const w=Number(localStorage.getItem(WORLD_KEY));if(WORLD_NAMES[w])initialWorld=w}catch{}
@@ -779,13 +779,14 @@
   })();
   const namePattern=name=>new RegExp('^'+[...norm(name)].map(ch=>
     /[\p{L}\p{N}]/u.test(ch)?ch:'\\'+ch).join('')+'$','i');
-  // 2026 HANS 遠征周目：一周目原名、二周目「・改」、三周目「・改²」、四周目「・改³」。
-  // norm 採 NFKC：上標²、³ 正規化成 2、3，顯示與比對分開處理。
+  // 2026 HANS 遠征周目：一周目原名；二至五周目依次為「・改」「・改²」「・改³」「・改⁴」。
+  // norm 採 NFKC：上標²、³、⁴ 正規化成 2、3、4，顯示與比對分開處理。
   // 舊版 seed 候選時可能把「・改3」當新地名再加「・改³」，造成「・改3・改³」。
   // 移除所有連續的改版尾碼，再依真正周目補回正確的一個尾碼。
-  const REFORM_MARK=/(?:[・･·‧•∙．]改(?:[23])?)+$/u;
+  const REFORM_MARK=/(?:[・･·‧•∙．]改(?:[234])?)+$/u;
   function stageNameWorld(name){
     const n=norm(name);
+    if(/[・･·‧•∙．]改4$/u.test(n))return 5;
     if(/[・･·‧•∙．]改3$/u.test(n))return 4;
     if(/[・･·‧•∙．]改2$/u.test(n))return 3;
     if(/[・･·‧•∙．]改$/u.test(n))return 2;
@@ -795,7 +796,7 @@
   function stageFitsWorld(name,world){return stageNameWorld(name)===Number(world);}
   function stageLabelForWorld(base,world){
     const clean=baseStageName(base);
-    return clean+(world===2?'・改':world===3?'・改²':world===4?'・改³':'');
+    return clean+(world===2?'・改':world===3?'・改²':world===4?'・改³':world===5?'・改⁴':'');
   }
   function canonicalStageName(name,world){
     // 只處理「後綴重複」；未知地圖仍保留從遊戲畫面取得的原名。
@@ -832,13 +833,13 @@
     STAGES[key].verified=true;
     redrawStageChoices();return key;
   }
-  // 用已知地圖的原名推導一至四周目選關候選，無須先人工捲完清單。
+  // 用已知地圖的原名推導一至五周目選關候選，無須先人工捲完清單。
   // 候選本身不代表已解鎖；真正出征前仍須在該周目看到相同名稱、Lv 與可挑戰。
   function seedKnownStageCandidates(){
     const bases=new Set(Object.values(STAGES).map(x=>baseStageName(x.name)));
     for(const base of bases){
       if(!base||base.length<2||base.length>40)continue;
-      for(const world of [1,2,3,4]){
+      for(const world of [1,2,3,4,5]){
         const name=stageLabelForWorld(base,world),key='hans:w'+world+':'+norm(name);
         if(Object.values(STAGES).some(x=>x.world===world&&norm(x.name)===norm(name)))continue;
         STAGES[key]={name,re:namePattern(name),unlocked:null,level:'',world,verified:false};
@@ -860,14 +861,14 @@
         const rect=rct(p),cx=rect.left+rect.width/2,text=String(p.textContent||'');
         if(cx>innerWidth*.48||rect.width>innerWidth*.55)break;
         if(rect.width<115||rect.height<48||rect.height>175||text.length>350||!levelPattern.test(text))continue;
-        // 顯示保留三／四周目上標「²／³」，內部比對再採 NFKC 正規化。
+        // 顯示保留三／四／五周目上標「²／³／⁴」，內部比對再採 NFKC 正規化。
         const leaves=[...p.querySelectorAll('*')].filter(x=>x.childElementCount===0)
           .map(x=>String(x.textContent||'').trim()).filter(Boolean);
         const possibleTitles=leaves.filter(x=>x.length>=2&&x.length<=65&&/[\p{L}]/u.test(x)
           && !/^(?:Lv\.?\s*\d+[-–—~～]\d+|MVP.*|已通關|未解鎖|可挑戰|已選擇|劇情|出發|頭目.*)$/i.test(x)
           && !/^\d+(?:[:：]\d+)?$/.test(x));
-        // 四周目卡片以「改³」結尾的標題為優先，避免錯抓 MVP 或狀態文字。
-        const title=possibleTitles.find(x=>/[・･·‧•∙．]改(?:[²³23])?$/u.test(norm(x)))||possibleTitles[0];
+        // 優先讀取改／改²／改³／改⁴結尾的標題，避免錯抓 MVP 或狀態文字。
+        const title=possibleTitles.find(x=>/[・･·‧•∙．]改(?:[234])?$/u.test(norm(x)))||possibleTitles[0];
         if(!title)continue;
         const key=norm(title);
         if(!used.has(key)){
@@ -882,7 +883,7 @@
   }
   const catalog={running:false,complete:false,scroll:null,steps:0,observed:new Set(),
     searchName:'',searchSteps:0,searchAt:0,topReadyAt:0,topConfirmed:false,world:null,worldAt:0};
-  // 每次頁面載入在四周目至少完成一次「從頂端到最底端」掃描；切換周目不重複掃同一批。
+  // 四周目及五周目首次切換時各自從清單頂端完整掃描，避免只收錄畫面可見的幾關。
   const completedWorldScans=new Set();
   function resetCatalog(){
     Object.assign(catalog,{running:false,complete:false,scroll:null,steps:0,observed:new Set(),
@@ -914,7 +915,7 @@
     if(!catalog.complete&&!catalog.running){
       catalog.running=true;catalog.steps=0;catalog.observed=new Set();
       catalog.topConfirmed=false;catalog.topReadyAt=Date.now()+550;
-      // 掃描目前遊戲所顯示的完整四周目清單；不是固定五關，也不捏造未出現的關卡。
+      // 掃描目前遊戲所顯示的完整關卡清單；不限制五關，也不捏造未出現的關卡。
       catalog.scroll=findListScroll(stageRows());
       if(catalog.scroll)catalog.scroll.scrollTop=0;
     }
@@ -922,7 +923,7 @@
     const el=catalog.scroll;
     if(!el || !el.isConnected){
       catalog.running=false;catalog.complete=false;
-      tell('四周目清單尚未找到可捲動區，稍後重試；不會誤判掃描完成');return;
+      tell(WORLD_NAMES[world]+'清單尚未找到可捲動區，稍後重試；不會誤判掃描完成');return;
     }
     // 從頂端開始，等待虛擬清單渲染，不在同一個 tick 立即往下跳。
     if(!catalog.topConfirmed){
@@ -966,10 +967,9 @@
     if(catalog.world!==tab.world){
       resetCatalog();catalog.world=tab.world;catalog.worldAt=Date.now();
     }
-    // 四周目每次頁面載入第一次看到清單時，從頂端完整掃到最下方。
-    // 所有其他關卡（含未解鎖）都會依遊戲實際卡片加入下拉清單。
-    if(tab.world===4 && !completedWorldScans.has(4)){
-      scanAllStages(4);
+    // 四、五周目在首次進入時分開掃描全部關卡；未解鎖項目保留，但不會自動出征。
+    if((tab.world===4||tab.world===5) && !completedWorldScans.has(tab.world)){
+      scanAllStages(tab.world);
       return;
     }
     if(!catalog.running)readStageCatalog(tab.world);
@@ -1020,7 +1020,7 @@
     if(STAGES[desired])worldSelections[w]=desired;
   }
   const oldTarget=worldSelections['1'];
-  if(oldTarget&&!STAGES[oldTarget]&&oldTarget.startsWith('hans:')&&!/^hans:w[1234]:/.test(oldTarget)){
+  if(oldTarget&&!STAGES[oldTarget]&&oldTarget.startsWith('hans:')&&!/^hans:w[12345]:/.test(oldTarget)){
     rememberStage(oldTarget.slice(5),true,'',1);
     worldSelections['1']='hans:w1:'+norm(oldTarget.slice(5));
   }
@@ -1701,17 +1701,17 @@
       .some(el => el.getClientRects().length > 0 && W.story.test(norm(el.textContent)));
   }
 
-  // 遠征左上角的周目按鈕。必須驗證按鈕選中狀態，才可自動出征。
+  // 遠征左上角的一至五周目按鈕。必須驗證選中狀態，才可自動出征。
   function worldTabs(){
     const tabs={};
     for(const el of document.querySelectorAll('button,[role="button"]')){
       if(hud.contains(el)||!shown(el))continue;
-      const m=norm(el.textContent||'').match(/^([一二三四1234])[周週]目$/);
+      const m=norm(el.textContent||'').match(/^([一二三四五12345])[周週]目$/);
       if(!m)continue;
-      const id={'一':1,'二':2,'三':3,'四':4,'1':1,'2':2,'3':3,'4':4}[m[1]];
+      const id={'一':1,'二':2,'三':3,'四':4,'五':5,'1':1,'2':2,'3':3,'4':4,'5':5}[m[1]];
       if(id&&!tabs[id])tabs[id]=el;
     }
-    // 舊帳號可能尚未開四周目，仍支援原三周目；四周目若不存在不會誤點其他按鈕。
+    // 尚未開放高周目的帳號仍保留前面周目；五周目按鈕不存在就不會誤點。
     return tabs[1]&&tabs[2]&&tabs[3]?tabs:null;
   }
   function selectedWorldFromTabs(tabs){
@@ -1741,13 +1741,13 @@
     }
     // 部分 HANS 卡片以獨立 DOM 標題/等級徽章繪製，stageRows 可能拿不到 Lv 文字。
     // 僅採左側遠征清單中「至少兩個不同的可見關卡標題」作為周目證據。
-    // 每張標題須帶改/改²/改³，不能拿我們自己的下拉選單或右側預覽推測。
+    // 每張標題須帶改/改²/改³/改⁴，不能拿腳本的下拉選單或右側預覽推測。
     const distinct=new Map();
     for(const el of document.querySelectorAll('span,div,p,strong,b,h3,h4')){
       if(el.childElementCount!==0||!shown(el)||hud.contains(el)||
          el.closest('#'+UI_ID+',#hans-independent-zoom-panel,script,style,noscript'))continue;
       const name=norm(el.textContent||'');
-      if(name.length<3||name.length>65||!/[・･·‧•∙．]改(?:[23])?$/u.test(name))continue;
+      if(name.length<3||name.length>65||!/[・･·‧•∙．]改(?:[234])?$/u.test(name))continue;
       const rect=rct(el),mid=rect.left+rect.width/2;
       if(mid>=innerWidth*.34 || rect.width>innerWidth*.34)continue;
       // 排除沒有 Lv 卡片環境的無關標籤。
@@ -1844,9 +1844,9 @@
     phase('expedition');
     if(!ensureWorldTab())return;
     if(catalog.world!==chosenWorld()){stageExplorerTick();return;}
-    // 四周目首次進入，必須先讀取完整遊戲關卡列表；掃描時避免與 seekStage 爭奪捲動位置。
-    if(chosenWorld()===4 && catalog.running){
-      tell('正在收錄四周目完整關卡清單：'+catalog.observed.size+' 關');return;
+    // 四、五周目首次進入先掃描完整關卡；不要與 seekStage 同時捲動。
+    if((chosenWorld()===4||chosenWorld()===5) && catalog.running){
+      tell('正在收錄'+WORLD_NAMES[chosenWorld()]+'完整關卡清單：'+catalog.observed.size+' 關');return;
     }
     // 掃描後才針對使用者選定關卡進行定向搜尋和出征確認。
     const stage=targetStage();

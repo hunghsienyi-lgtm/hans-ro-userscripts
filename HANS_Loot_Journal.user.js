@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.9.1
-// @description  v0.9.1：修復四周目已選卻無法確認、改³後綴重複導致選不到關卡；自動整理舊選關記錄，保留四周目全關掃描。
+// @version      0.9.2
+// @description  v0.9.2：每場自動切換 2 倍速；只在頂部顯示 1× 時點擊、2× 不操作，新增獨立開關與狀態顯示。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.9.1';
+  const VERSION = '0.9.2';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -1099,6 +1099,32 @@
   const shortHelp=document.createElement('div');
   shortHelp.style.cssText='font:10px/1.35 sans-serif;color:#e9e0c6;margin:3px 0 0';
   shortHelp.textContent='只在自動重進開啟時執行；捨棄可能影響未結算獎勵，卡片是否保留尚未確認';
+
+  // 倍速獨立於選關、重進與三分鐘刷卡，預設每場自動啟用。
+  const SPEED_AUTO_KEY='hans-ro-auto-2x-v092';
+  let speedAutoEnabled=true;
+  try{speedAutoEnabled=localStorage.getItem(SPEED_AUTO_KEY)!=='0'}catch{}
+  const speedToggle=document.createElement('button');
+  speedToggle.type='button';speedToggle.id='hans-auto-speed-2x-toggle';
+  speedToggle.style.cssText='font:bold 11px sans-serif;padding:4px 7px;border:1px solid #c9dbed;border-radius:5px;cursor:pointer;color:white';
+  speedToggle.title='自動將每場的1×切換為2×；已是2×時不點擊';
+  const speedStatus=document.createElement('span');
+  speedStatus.id='hans-auto-speed-2x-status';
+  speedStatus.style.cssText='font:10px/1.3 sans-serif;color:#cce6fa;max-width:190px;overflow-wrap:anywhere';
+  speedStatus.textContent='倍速：等待戰鬥';
+  function speedNote(t){const v='倍速：'+t;if(speedStatus.textContent!==v)speedStatus.textContent=v;}
+  function updateSpeedToggle(){
+    speedToggle.textContent='每場2×：'+(speedAutoEnabled?'開':'關');
+    speedToggle.style.background=speedAutoEnabled?'#146f4c':'#5c6b82';
+  }
+  speedToggle.addEventListener('click',()=>{
+    speedAutoEnabled=!speedAutoEnabled;
+    try{localStorage.setItem(SPEED_AUTO_KEY,speedAutoEnabled?'1':'0')}catch{}
+    updateSpeedToggle();speedNote(speedAutoEnabled?'等待戰鬥':'已停用');
+  });
+  shortGroup.append(speedToggle,speedStatus);
+  updateSpeedToggle();
+
   function updateShortControls(){
     shortToggle.textContent='3分鐘刷卡：'+(shortPrefs.enabled?'開':'關')+
       (shortPrefs.enabled?'（3:'+String(shortPrefs.grace).padStart(2,'0')+'）':'');
@@ -1947,6 +1973,75 @@
       phase('waiting');tell('等待結算／主城／遠征／難度視窗（目標：'+targetLabel()+'）');
     } catch(e) {tell('偵測錯誤：請截圖並回報');console.error('[HANS 整合選關]',e);}
   }
+  // 每場速度：辨認遊戲頂部 1×/2× 按鈕。僅在觀察到 1× 時觸發，
+  // 必須後續真的顯示 2× 才算成功，避免一直點已開啟的 2× 而切回 1×。
+  let speedLastSeenAt=0,speedLastClickAt=0,speedAttempts=0,speedOneSince=0;
+  function speedNumber(value){
+    const t=norm(value||'').replace(/^[⚡★✦]/u,'').toLowerCase();
+    const m=t.match(/^(?:戰鬥)?(?:速度|倍速)?([12])(?:x|×)(?:速)?$/u);
+    return m?Number(m[1]):null;
+  }
+  function validSpeedElement(el){
+    if(!el || !shown(el) || hud.contains(el) || zoomPanel.contains(el) ||
+       el.closest('#roj4-menu,#picker,#hans-independent-zoom-panel'))return false;
+    const r=rct(el),centerX=r.left+r.width/2;
+    return r.top>=-6 && r.top<Math.min(120,innerHeight*.23) &&
+      r.width>=14 && r.width<=110 && r.height>=12 && r.height<=70 &&
+      centerX>innerWidth*.35 && centerX<innerWidth*.94;
+  }
+  function findBattleSpeed(){
+    for(const el of document.querySelectorAll('button,[role="button"],[data-speed]')){
+      if(!validSpeedElement(el))continue;
+      const values=[el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('data-speed')];
+      const rate=values.map(speedNumber).find(v=>v===1||v===2);
+      if(rate)return {el,rate};
+    }
+    // 後備：遊戲若用可點擊 div/span 包住倍率文字，仍可辨識。
+    for(const leaf of document.querySelectorAll('span,div')){
+      if(leaf.childElementCount!==0||!validSpeedElement(leaf))continue;
+      const rate=speedNumber(leaf.textContent);if(!rate)continue;
+      let control=leaf.closest('button,[role="button"],[tabindex]');
+      if(!control){
+        for(let p=leaf.parentElement,depth=0;p&&depth<3;p=p.parentElement,depth++){
+          if(!validSpeedElement(p))break;
+          if(getComputedStyle(p).cursor==='pointer'||p.hasAttribute('onclick')){control=p;break;}
+        }
+      }
+      if(control&&validSpeedElement(control)&&typeof control.click==='function')return {el:control,rate};
+    }
+    return null;
+  }
+  function autoTwoTimesTick(){
+    if(document.hidden||!speedAutoEnabled)return;
+    const now=Date.now(),found=findBattleSpeed();
+    if(!found){
+      if(speedLastSeenAt && now-speedLastSeenAt>1800){
+        speedAttempts=0;speedOneSince=0;speedLastClickAt=0;speedLastSeenAt=0;
+        speedNote('等待下一場');
+      }
+      return;
+    }
+    speedLastSeenAt=now;
+    if(found.rate===2){
+      speedAttempts=0;speedOneSince=0;
+      speedNote('已確認 2×');return;
+    }
+    if(!speedOneSince)speedOneSince=now;
+    if(now-speedOneSince<400 || now-speedLastClickAt<1400)return;
+    if(speedAttempts>=3){speedNote('仍為 1×（本場已重試3次）');return;}
+    try{
+      speedAttempts++;speedLastClickAt=now;
+      found.el.click();
+      speedNote('已點 1×，等待確認 2×（'+speedAttempts+'/3）');
+    }catch(e){
+      speedNote('切換失敗：'+String(e?.message||e).slice(0,55));
+      console.warn('[HANS 自動2倍速] 點擊失敗',e);
+    }
+  }
+  setInterval(()=>{
+    try{autoTwoTimesTick()}catch(e){console.warn('[HANS 自動2倍速] 監測失敗',e)}
+  },550);
+
   // 沒有開啟自動重進時，進遠征列表也會掃描；讓玩家先挑選新關卡。
   setInterval(()=>{
     if(document.hidden)return;

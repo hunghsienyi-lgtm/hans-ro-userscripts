@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.9.13
-// @description  v0.9.13：修正作者改用「和船長說話（空白鍵）」後自動重進無法辨識；兼容原「與遠征隊長交談」，其餘選關、周目、戰利品與安全確認流程不變。
+// @version      0.9.14
+// @description  v0.9.14：修復五周目實際「改⁵」未辨識、右側預覽已正確卻無法點出發；兼容舊「改⁴」，不變更其他腳本。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.9.13';
+  const VERSION = '0.9.14';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -777,16 +777,21 @@
     try{const v=JSON.parse(localStorage.getItem(CATALOG_KEY)||'[]');return Array.isArray(v)?v:[]}
     catch{return []}
   })();
-  const namePattern=name=>new RegExp('^'+[...norm(name)].map(ch=>
-    /[\p{L}\p{N}]/u.test(ch)?ch:'\\'+ch).join('')+'$','i');
+  const namePattern=name=>{
+    const raw=norm(name);
+    const escaped=[...raw].map(ch=>/[\p{L}\p{N}]/u.test(ch)?ch:'\\'+ch).join('');
+    const flexible=/[・･·‧•∙．]改[45]$/u.test(raw)?
+      escaped.replace(/改[45]$/u,'改(?:4|5)'):escaped;
+    return new RegExp('^'+flexible+'$','i');
+  };
   // 2026 HANS 遠征周目：一周目原名；二至五周目依次為「・改」「・改²」「・改³」「・改⁴」。
   // norm 採 NFKC：上標²、³、⁴ 正規化成 2、3、4，顯示與比對分開處理。
   // 舊版 seed 候選時可能把「・改3」當新地名再加「・改³」，造成「・改3・改³」。
   // 移除所有連續的改版尾碼，再依真正周目補回正確的一個尾碼。
-  const REFORM_MARK=/(?:[・･·‧•∙．]改(?:[234])?)+$/u;
+  const REFORM_MARK=/(?:[・･·‧•∙．]改(?:[2345])?)+$/u;
   function stageNameWorld(name){
     const n=norm(name);
-    if(/[・･·‧•∙．]改4$/u.test(n))return 5;
+    if(/[・･·‧•∙．]改(?:4|5)$/u.test(n))return 5;
     if(/[・･·‧•∙．]改3$/u.test(n))return 4;
     if(/[・･·‧•∙．]改2$/u.test(n))return 3;
     if(/[・･·‧•∙．]改$/u.test(n))return 2;
@@ -796,7 +801,7 @@
   function stageFitsWorld(name,world){return Number(world)===6?stageNameWorld(name)===1:stageNameWorld(name)===Number(world);}
   function stageLabelForWorld(base,world){
     const clean=baseStageName(base);
-    return clean+(world===2?'・改':world===3?'・改²':world===4?'・改³':world===5?'・改⁴':'');
+    return clean+(world===2?'・改':world===3?'・改²':world===4?'・改³':world===5?'・改⁵':'');
   }
   function canonicalStageName(name,world){
     // 只處理「後綴重複」；未知地圖仍保留從遊戲畫面取得的原名。
@@ -880,7 +885,7 @@
           && !/^(?:Lv\.?\s*\d+[-–—~～]\d+|MVP.*|已通關|未解鎖|可挑戰|已選擇|劇情|出發|頭目.*)$/i.test(x)
           && !/^\d+(?:[:：]\d+)?$/.test(x));
         // 優先讀取改／改²／改³／改⁴結尾的標題，避免錯抓 MVP 或狀態文字。
-        const title=possibleTitles.find(x=>/[・･·‧•∙．]改(?:[234])?$/u.test(norm(x)))||possibleTitles[0];
+        const title=possibleTitles.find(x=>/[・･·‧•∙．]改(?:[2345])?$/u.test(norm(x)))||possibleTitles[0];
         if(!title)continue;
         const key=norm(title);
         if(!used.has(key)){
@@ -1965,7 +1970,7 @@
       if(el.childElementCount!==0||!shown(el)||hud.contains(el)||
          el.closest('#'+UI_ID+',#hans-independent-zoom-panel,script,style,noscript'))continue;
       const name=norm(el.textContent||'');
-      if(name.length<3||name.length>65||!/[・･·‧•∙．]改(?:[234])?$/u.test(name))continue;
+      if(name.length<3||name.length>65||!/[・･·‧•∙．]改(?:[2345])?$/u.test(name))continue;
       const rect=rct(el),mid=rect.left+rect.width/2;
       if(mid>=innerWidth*.34 || rect.width>innerWidth*.34)continue;
       // 排除沒有 Lv 卡片環境的無關標籤。
@@ -2039,7 +2044,9 @@
       if(catalog.scroll)catalog.scroll.scrollTop=0;
     }
     const rows=readStageCatalog(chosenWorld());
-    const row=rows.find(x=>stageFitsWorld(x.name,chosenWorld())&&norm(x.name)===norm(target));
+    const row=rows.find(x=>stageFitsWorld(x.name,chosenWorld())&&
+      norm(canonicalStageName(x.name,chosenWorld()))===
+      norm(canonicalStageName(target,chosenWorld())));
     if(row)return row;
     const el=catalog.scroll;
     if(el&&Date.now()-catalog.searchAt<450)return null; // 等列表更新才往下捲下一段
@@ -2065,9 +2072,16 @@
     phase('expedition');
     if(!ensureWorldTab())return;
     if(catalog.world!==chosenWorld()){stageExplorerTick();return;}
-    // 四、五周目首次進入先掃描完整關卡；不要與 seekStage 同時捲動。
+    // 當目標和右側預覽都已證實一致，不讓背景掃描阻止出發。
     if([4,5,6].includes(chosenWorld()) && catalog.running){
-      tell('正在收錄'+WORLD_NAMES[chosenWorld()]+'完整關卡清單：'+catalog.observed.size+' 關');return;
+      const wanted=targetStage(),row=wanted&&stageTarget();
+      const previewOK=wanted&&row&&hits(wanted.re).some(h=>
+        rightPreview(h)&&stageFitsWorld(h.t,chosenWorld()));
+      if(!previewOK){
+        tell('正在收錄'+WORLD_NAMES[chosenWorld()]+'完整關卡清單：'+catalog.observed.size+' 關');return;
+      }
+      catalog.running=false;
+      tell('關卡及預覽已核對｜不等待完整掃描');
     }
     // 掃描後才針對使用者選定關卡進行定向搜尋和出征確認。
     const stage=targetStage();
@@ -2087,8 +2101,9 @@
     const previewMatch=previewHits.some(h=>stage.re.test(h.t)&&stageFitsWorld(h.t,chosenWorld()));
     const otherPreview=previewHits.some(h=>!stage.re.test(h.t)||!stageFitsWorld(h.t,chosenWorld()));
     // 如果右邊明顯顯示另一個副本，即使左邊的卡片有「已選」樣式也不信任。
-    const confirmed=(selectedStage(row.el)||stageClickedAt>0)&&
-      (previewMatch||(!otherPreview&&selectedStage(row.el)));
+    // 新版藍框選中不一定提供 selected/active class；右側精確預覽可作獨立證據。
+    const confirmed=!otherPreview&&(
+      previewMatch||(previewHits.length===0&&selectedStage(row.el)));
     const depart=findControl(W.depart);
     if(stageClickedAt&&Date.now()-stageClickedAt<1500){tell('已按關卡，等待右側預覽更新');return;}
     if(confirmed && depart){

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜逐件裝備巡檢＋GS前十保護＋Discord完整紀錄
 // @namespace    https://ro.hans-webgametw.com/
-// @version      2.4.1
-// @description  V2.4.1：商人路線錄製與重播、五品質勾選販賣返程；加強傳說前十保護及商人視窗關閉前的安全驗證。
+// @version      2.5.0
+// @description  V2.5.0：固定下9右13去礦石商人、左13上9返程；勾選五品質後按一鍵販賣及確認全部賣掉；獨立控制與安全確認。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -67,18 +67,18 @@
   const pane = document.createElement('section');
   pane.id = ID;
   pane.innerHTML = `
-    <div class="hp-title"><strong title="按住這個藍色標題列就能拖曳">HANS｜傳說裝備前10 V2.4.1</strong><button id="hp-toggle" title="縮小／展開">−</button></div>
+    <div class="hp-title"><strong title="按住這個藍色標題列就能拖曳">HANS｜傳說裝備前10 V2.5.0</strong><button id="hp-toggle" title="縮小／展開">−</button></div>
     <div id="hp-body">
       <div class="hp-sub">主城按 C → 背包 → 全部；E 穿戴完全跳過。只保留傳說品質：法杖、頭上中下、披肩、飾品、鞋子、盾牌、衣服（鎧甲）。</div>
       <div class="hp-sub">逐件掃描非 E：只對傳說法杖及其餘指定部位傳說裝備排 GS 前10。其他品質與非杖武器不保留；先預覽再手動確認。Discord只傳摘要。</div>
       <div class="hp-bar"><button id="hp-scan">① 掃描非 E 裝備</button><button id="hp-scan-dc">① 掃描非 E＋傳 DC</button></div>
       <div class="hp-bar"><button id="hp-apply" disabled>② 確認前10保護</button><button id="hp-stop" disabled>停止</button></div>
       <div class="hp-sub" style="margin-top:9px;border-top:1px solid #cbd5e1;padding-top:7px"><b>商人路線＋一鍵販賣（可獨立執行）</b></div>
-      <div class="hp-sub">第一次請在指定原點錄製 WASD／方向鍵走到礦石商人的路線，點開商人後儲存；下次可獨立重播。五種品質全選，已插卡／已精煉不勾選，實際販賣需再確認。</div>
-      <div class="hp-bar"><button id="hp-route-learn">錄製去商人路線</button><button id="hp-route-save" disabled>完成錄製</button></div>
-      <div class="hp-bar"><button id="hp-route-run">▶ 去商人＋販賣＋返回</button><button id="hp-route-sell">商人已開：販賣</button></div>
-      <div class="hp-bar"><button id="hp-route-return">↩ 返回原點</button><button id="hp-route-stop">停止移動</button></div>
-      <div class="hp-sub" id="hp-route-status">商人流程未啟動；尚未學習路線。</div>
+      <div class="hp-sub">固定路線：從原點 ↓9 下 →13 下，回程 ←13 下 ↑9 下；不用錄製。五種品質全勾後依序按「一鍵販賣」和「全部賣掉」，販賣前需確認。</div>
+      <div class="hp-bar"><button id="hp-route-go">↓9 →13｜去商人</button><button id="hp-route-return">←13 ↑9｜返回原點</button></div>
+      <div class="hp-bar"><button id="hp-route-run">▶ 去商人＋賣光＋返程</button><button id="hp-route-sell">商人已開：販賣</button></div>
+      <div class="hp-bar"><label style="flex:1">按鍵方式 <select id="hp-route-keys"><option value="wasd">WASD</option><option value="arrows">方向鍵</option></select></label><label>單次按住 <input id="hp-route-tap-ms" type="number" min="50" max="300" step="10" value="110" style="width:48px"/>ms</label><button id="hp-route-stop">停止</button></div>
+      <div class="hp-sub" id="hp-route-status">固定路線：↓9 →13｜返程 ←13 ↑9。從原點使用。</div>
       <div class="hp-sub"><b>Discord Webhook（只保存在本機 Tampermonkey）：</b></div>
       <div class="hp-bar"><input id="hp-hook" type="password" placeholder="貼入 Webhook URL，不要貼到聊天" autocomplete="off"><button id="hp-save-hook">儲存</button></div>
       <div class="hp-bar"><button id="hp-send" disabled>傳送掃描摘要</button><button id="hp-export" disabled>匯出 CSV</button><button id="hp-json" disabled>匯出 JSON</button></div>
@@ -586,299 +586,247 @@
     try{await sendDiscord(scanSnapshot)}finally{running=false;controls()}
   };
 
-  // ===== 礦石商人：錄製去程、對話、一鍵販賣、逆向返程。完全獨立於裝備掃描流程。 =====
+  // ===== 固定商人路線與販賣兩步確認；可單獨執行，不影響裝備掃描 =====
   function initMerchantRoute() {
-    const ROUTE_KEY='hans-ro-merchant-route-v1';
-    const KEYS=new Set(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright']);
-    const NORMALIZE={arrowup:'w',arrowdown:'s',arrowleft:'a',arrowright:'d'};
-    const OPPOSITE={w:'s',s:'w',a:'d',d:'a'};
-    const GRADES=['普通','優良','稀有','史詩','傳說'];
-    const routeStatus=message=>{const el=$('hp-route-status');if(el)el.textContent=message;};
-    const merchantPause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-    let learning=null,routeBusy=false,routeStop=false,heldKeys=new Set();
-    let storedRoute=null;
-    try{storedRoute=JSON.parse(GM_getValue(ROUTE_KEY,'null'));}catch{}
-    if(!Array.isArray(storedRoute?.segments))storedRoute=null;
-    const normalizeKey=e=>{
-      const key=String(e.key||'').toLowerCase();
-      return NORMALIZE[key]||key;
+    const GRADES=Object.freeze(['普通','優良','稀有','史詩','傳說']);
+    const OUTBOUND=Object.freeze([['down',9],['right',13]]);
+    const INBOUND=Object.freeze([['left',13],['up',9]]);
+    const KEYMAP=Object.freeze({wasd:{down:['s','KeyS'],right:['d','KeyD'],left:['a','KeyA'],up:['w','KeyW']},
+      arrows:{down:['ArrowDown','ArrowDown'],right:['ArrowRight','ArrowRight'],left:['ArrowLeft','ArrowLeft'],up:['ArrowUp','ArrowUp']}});
+    const $r=id=>pane.querySelector('#'+id);
+    const inform=message=>{const el=$r('hp-route-status');if(el)el.textContent=message;};
+    const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+    const buttons={go:$r('hp-route-go'),back:$r('hp-route-return'),full:$r('hp-route-run'),
+      sell:$r('hp-route-sell'),stop:$r('hp-route-stop'),keys:$r('hp-route-keys'),hold:$r('hp-route-tap-ms')};
+    let busy=false,stopped=false,pressed=null;
+    const isReady=()=>!busy&&!running;
+    const refresh=()=>{
+      for(const key of ['go','back','full','sell'])buttons[key].disabled=!isReady();
+      buttons.stop.disabled=!busy;
     };
-    const keyCode=k=>'Key'+k.toUpperCase();
-    function setKeys(next) {
-      const goal=new Set(next);
-      for(const k of heldKeys)if(!goal.has(k)){
-        window.dispatchEvent(new KeyboardEvent('keyup',{key:k,code:keyCode(k),bubbles:true}));
-      }
-      for(const k of goal)if(!heldKeys.has(k)){
-        window.dispatchEvent(new KeyboardEvent('keydown',{key:k,code:keyCode(k),bubbles:true}));
-      }
-      heldKeys=goal;
-    }
-    function stopKeys(){setKeys([]);}
-    function onRealKey(ev,down){
-      if(!learning||!ev.isTrusted||ev.repeat)return;
-      const key=normalizeKey(ev);
-      if(!['w','a','s','d'].includes(key))return;
-      const at=performance.now()-learning.started;
-      learning.events.push({at,down,key});
-    }
-    window.addEventListener('keydown',ev=>onRealKey(ev,true),true);
-    window.addEventListener('keyup',ev=>onRealKey(ev,false),true);
-    // 保存最後一次遊戲場景點擊；通常是點擊礦石商人的那一下。
-    document.addEventListener('pointerup',ev=>{
-      if(!learning||!ev.isTrusted||pane.contains(ev.target))return;
-      const target=ev.target?.closest?.('canvas,#stage,.npc,.npc-label');
-      if(!target)return;
-      const r=target.getBoundingClientRect();
-      if(r.width<15||r.height<15)return;
-      const id=target.id||'';
-      learning.lastClick={
-        id:id&&/^[a-zA-Z][\w-]*$/.test(id)?id:'',
-        tag:target.tagName.toLowerCase(),
-        x:Math.max(0,Math.min(1,(ev.clientX-r.left)/r.width)),
-        y:Math.max(0,Math.min(1,(ev.clientY-r.top)/r.height))
-      };
-    },true);
-    function fromEvents(events,totalMs){
-      const sorted=events.filter(e=>Number.isFinite(e.at)&&e.at>=0).sort((a,b)=>a.at-b.at);
-      const active=new Set(),segments=[];let last=0;
-      for(const ev of sorted){
-        const at=Math.max(last,Math.min(totalMs,ev.at));
-        if(at-last>25&&active.size)segments.push({keys:[...active].sort(),ms:Math.round(at-last)});
-        if(ev.down)active.add(ev.key);else active.delete(ev.key);
-        last=at;
-      }
-      if(totalMs-last>25&&active.size)segments.push({keys:[...active].sort(),ms:Math.round(totalMs-last)});
-      const compact=[];
-      for(const seg of segments){
-        const previous=compact[compact.length-1];
-        if(previous&&previous.keys.join(',')===seg.keys.join(','))previous.ms+=seg.ms;
-        else compact.push(seg);
-      }
-      return compact;
-    }
-    function routeCounts(){
-      const amount=storedRoute?.segments?.reduce((a,r)=>a+(r.ms||0),0)||0;
-      return storedRoute ? storedRoute.segments.length+' 段／移動約 '+Math.round(amount/1000)+' 秒' : '尚未錄製';
-    }
-    const learn=$('hp-route-learn'),save=$('hp-route-save'),run=$('hp-route-run'),
-      sell=$('hp-route-sell'),back=$('hp-route-return'),halt=$('hp-route-stop');
-    function buttons(){
-      learn.disabled=routeBusy||!!learning||running;
-      save.disabled=!learning||routeBusy;
-      run.disabled=routeBusy||!!learning||running||!storedRoute;
-      sell.disabled=routeBusy||!!learning||running;
-      back.disabled=routeBusy||!!learning||running||!storedRoute;
-      halt.disabled=!routeBusy&&!learning;
-    }
-    routeStatus('路線：'+routeCounts()+'。首次使用先從固定原點錄製。');
-    buttons();
-    learn.onclick=()=>{
-      if(routeBusy||running)return;
-      learning={started:performance.now(),events:[],lastClick:null};
-      routeStatus('錄製中：從你的原點用 WASD 或方向鍵走到礦石商人，點開「販賣」頁，再按「完成錄製」。不記錄滑鼠拖曳移動。');
-      buttons();
+    const keyEntry=dir=>{
+      const mode=buttons.keys.value==='arrows'?'arrows':'wasd';
+      return KEYMAP[mode][dir];
     };
-    save.onclick=()=>{
-      if(!learning)return;
-      const total=performance.now()-learning.started;
-      const segments=fromEvents(learning.events,total);
-      const click=learning.lastClick;
-      learning=null;
-      if(!segments.length){routeStatus('沒有錄到 WASD／方向鍵的有效移動；未覆蓋舊路線。');buttons();return;}
-      if(total>180000||segments.length>300){routeStatus('路線超過 3 分鐘或 300 段，請重新錄製。');buttons();return;}
-      storedRoute={version:1,createdAt:new Date().toISOString(),segments,click};
-      GM_setValue(ROUTE_KEY,JSON.stringify(storedRoute));
-      routeStatus('路線已儲存：'+routeCounts()+'。請先關閉商人視窗並走回相同原點，之後可按「▶ 去商人＋販賣＋返回」。');
-      buttons();
+    const emit=(entry,down)=>{
+      window.dispatchEvent(new KeyboardEvent(down?'keydown':'keyup',
+        {key:entry[0],code:entry[1],bubbles:true,cancelable:true}));
     };
-    function merchantPanel(){
-      const buttons=[...document.querySelectorAll('button')].filter(b=>!pane.contains(b)&&/一鍵販賣/.test(b.textContent||''));
-      for(const button of buttons){
-        let node=button.parentElement;
-        for(let i=0;i<10&&node&&node!==document.body;i++,node=node.parentElement){
-          const text=(node.innerText||node.textContent||'').replace(/\s+/g,'');
-          if(text.length>16000)break;
-          if(text.includes('一鍵販賣')&&GRADES.every(x=>text.includes(x))&&text.includes('包含已插卡')&&text.includes('包含已精煉')){
+    const release=()=>{if(pressed){emit(pressed,false);pressed=null;}};
+    function activeCheck(){
+      if(stopped)throw Error('你已停止移動／販賣');
+      if(document.hidden)throw Error('切換分頁時停止，以免走位偏移');
+    }
+    function panel(){
+      const matches=[...document.querySelectorAll('button')]
+        .filter(b=>!pane.contains(b)&&isVisible(b)&&norm(textOf(b))==='一鍵販賣');
+      for(const button of matches){
+        for(let node=button.parentElement,n=0;node&&n<10&&node!==document.body;node=node.parentElement,n++){
+          const content=(node.innerText||node.textContent||'').replace(/\s+/g,'');
+          if(content.length>16000)break;
+          if(GRADES.every(g=>content.includes(g))&&content.includes('一鍵販賣')&&
+            content.includes('包含已插卡')&&content.includes('包含已精煉')){
             return {root:node,button};
           }
         }
       }
       return null;
     }
-    function gradeInput(root,grade){
+    const shopOpen=()=>Boolean(panel());
+    async function walk(reverse){
+      const seq=reverse?INBOUND:OUTBOUND;
+      const tap=Math.max(50,Math.min(300,Number(buttons.hold.value)||110));
+      const gap=115;
+      let completed=0;
+      if(shopOpen())throw Error('商人視窗尚未關閉，不能移動');
+      for(const [direction,count] of seq){
+        for(let n=1;n<=count;n++){
+          activeCheck();
+          if(shopOpen())throw Error('移動中商人視窗被開啟，已停止');
+          const entry=keyEntry(direction);
+          inform((reverse?'回原點':'往商人')+'：'+({down:'下',right:'右',left:'左',up:'上'}[direction])+
+            ' '+n+'/'+count+' 下｜總進度 '+(++completed)+'/22');
+          pressed=entry;emit(entry,true);
+          try{await sleep(tap);}finally{release();}
+          activeCheck();
+          await sleep(gap);
+        }
+      }
+      inform((reverse?'回程':'去程')+'已送出 22 下按鍵，請依角色實際位置核對。');
+    }
+    function npcLabel(){
+      const candidates=[...document.querySelectorAll('span,div,b,strong,small,button,[role="button"]')]
+        .filter(el=>!pane.contains(el)&&isVisible(el)&&norm(textOf(el))==='礦石商人');
+      candidates.sort((a,b)=>a.children.length-b.children.length);
+      return candidates[0]||null;
+    }
+    function tryNpc(){
+      const label=npcLabel();
+      if(!label)return false;
+      const clickable=label.closest('button,[role="button"],[data-npc],.npc')||label;
+      if(pane.contains(clickable)||!isVisible(clickable))return false;
+      clickable.click();
+      return true;
+    }
+    async function openShop(){
+      if(shopOpen())return true;
+      tryNpc();
+      const end=Date.now()+6500;
+      let tabClicked=false;
+      while(Date.now()<end){
+        activeCheck();
+        if(shopOpen())return true;
+        if(!tabClicked){
+          const tab=[...document.querySelectorAll('button,[role="tab"]')]
+            .find(b=>!pane.contains(b)&&isVisible(b)&&norm(textOf(b))==='販賣'&&!b.disabled);
+          if(tab){tab.click();tabClicked=true;}
+        }
+        await sleep(160);
+      }
+      return shopOpen();
+    }
+    const checkboxFor=(root,labelText,exact=false)=>{
       const labels=[...root.querySelectorAll('label')];
-      for(const label of labels){
-        const content=(label.innerText||label.textContent||'').replace(/\s+/g,'');
-        if(!content.startsWith(grade)||content.length>32)continue;
-        const checkbox=label.querySelector('input[type=checkbox]')||
-          (label.htmlFor?document.getElementById(label.htmlFor):null);
-        if(checkbox?.type==='checkbox')return checkbox;
+      const label=labels.find(x=>{
+        const txt=norm(textOf(x));
+        return exact?new RegExp('^'+labelText+'(?:\\s*\\d+)?$','u').test(txt):txt.includes(labelText);
+      });
+      if(!label)return null;
+      const checkbox=label.querySelector('input[type="checkbox"]')||
+        (label.htmlFor?document.getElementById(label.htmlFor):null);
+      return checkbox?.type==='checkbox'?checkbox:null;
+    };
+    function countsFrom(p){
+      const content=(p.root.innerText||p.root.textContent||'').replace(/\s+/g,'');
+      const start=content.indexOf('一鍵販賣'),part=content.slice(Math.max(0,start),Math.max(0,start)+500);
+      const out={};
+      for(const g of GRADES){
+        const hit=part.match(new RegExp(g+'(\\d+)','u'));
+        out[g]=hit?Number(hit[1]):null;
+      }
+      return out;
+    }
+    async function setQuality(p){
+      for(const g of GRADES){
+        activeCheck();
+        const cb=checkboxFor(p.root,g,true);
+        if(!cb||cb.disabled)throw Error('讀不到品質勾選框：'+g);
+        if(!cb.checked){cb.click();await sleep(90);}
+        if(!cb.checked)throw Error('無法勾選品質：'+g);
+      }
+      for(const name of ['包含已插卡','包含已精煉']){
+        const cb=checkboxFor(p.root,name);
+        if(!cb)throw Error('找不到安全設定：'+name);
+        if(cb.checked){cb.click();await sleep(90);}
+        if(cb.checked)throw Error('無法關閉安全設定：'+name);
+      }
+      return countsFrom(p);
+    }
+    function allSellButtons(){
+      return [...document.querySelectorAll('button')].filter(b=>
+        !pane.contains(b)&&isVisible(b)&&norm(textOf(b))==='全部賣掉');
+    }
+    async function waitSellAllButton(){
+      const until=Date.now()+6500;
+      while(Date.now()<until){
+        activeCheck();
+        const found=allSellButtons();
+        if(found.length===1)return found[0];
+        if(found.length>1)throw Error('畫面出現多個「全部賣掉」按鈕，停止以免誤點');
+        await sleep(160);
       }
       return null;
     }
-    function specialInput(root,name){
-      const labels=[...root.querySelectorAll('label')];
-      const label=labels.find(x=>(x.textContent||'').includes(name));
-      return label?.querySelector('input[type=checkbox]')||null;
+    async function sellNow(){
+      if(scanSnapshot?.complete&&scanSnapshot.version===POLICY_VERSION){
+        const unprotected=scanSnapshot.items.filter(x=>x.shouldProtect&&!x.protected);
+        if(unprotected.length)throw Error('還有 '+unprotected.length+' 件前十傳說裝備未保護。請先完成裝備保護並重新掃描。');
+      }
+      const p=panel();
+      if(!p)throw Error('找不到商人的「販賣」頁，請先開啟。');
+      const counts=await setQuality(p);
+      const total=Object.values(counts).every(Number.isFinite)?Object.values(counts).reduce((a,b)=>a+b,0):null;
+      const detail=GRADES.map(g=>g+' '+(counts[g]??'?')).join('、');
+      if(p.button.disabled||total===0){
+        inform('五品質已勾選，但目前沒有可販賣裝備（或按鈕不可用）；未販賣。');
+        return {empty:true};
+      }
+      const accepted=window.confirm('準備實際販賣遊戲裝備：\\n'+detail+
+        '\\n\\n將依序按「一鍵販賣」→「全部賣掉」。\\n所有未受遊戲保護的傳說裝備也可能被賣掉，無法復原。確認執行？');
+      if(!accepted)throw Error('已取消，未按販賣按鈕');
+      activeCheck();
+      const current=panel();
+      if(!current||current.button!==p.button||p.button.disabled)throw Error('販賣介面已變更，停止');
+      for(const g of GRADES){
+        if(!checkboxFor(current.root,g,true)?.checked)throw Error('品質設定變動：'+g);
+      }
+      for(const name of ['包含已插卡','包含已精煉']){
+        if(checkboxFor(current.root,name)?.checked!==false)throw Error('安全排除選項狀態異常：'+name);
+      }
+      inform('已確認販賣，準備按「一鍵販賣」...');
+      p.button.click();
+      const all=await waitSellAllButton();
+      if(!all)throw Error('按下一鍵販賣後，沒有找到「全部賣掉」；請人工查看，不會自動返程。');
+      if(all.disabled)throw Error('「全部賣掉」目前不可用，停止。');
+      activeCheck();
+      // 只按唯一可見且文字完全相符的確認按鈕，不推測或代按其他選項。
+      inform('找到確認視窗，按下「全部賣掉」...');
+      all.click();
+      await sleep(650);
+      if(allSellButtons().length)throw Error('按下「全部賣掉」後視窗尚未關閉，請人工確認；不會返程。');
+      inform('已操作「全部賣掉」。待確認遊戲結果；若有其他確認視窗請人工處理。');
+      return {empty:false};
     }
-    function readCounts(panel){
-      const t=(panel.root.innerText||panel.root.textContent||'').replace(/\s+/g,'');
-      const start=t.indexOf('一鍵販賣');
-      const line=t.slice(Math.max(0,start),Math.max(0,start)+400);
-      const values={};
-      for(const grade of GRADES){
-        const m=line.match(new RegExp(grade+'(\\d+)','u'));
-        values[grade]=m?Number(m[1]):null;
-      }
-      return values;
-    }
-    function checkAllFive(panel) {
-      for(const grade of GRADES){
-        const box=gradeInput(panel.root,grade);
-        if(!box||box.disabled)throw Error('找不到可操作的品質勾選框：'+grade);
-        if(!box.checked)box.click();
-        if(!box.checked)throw Error('品質未能勾選：'+grade);
-      }
-      // 使用者只指定五種品質；「含已插卡／含已精煉」維持關閉，避免擴大售出範圍。
-      for(const option of ['包含已插卡','包含已精煉']){
-        const box=specialInput(panel.root,option);
-        if(!box)throw Error('無法確認「'+option+'」是否關閉，已停止。');
-        if(box.checked)box.click();
-        if(box.checked)throw Error('無法關閉「'+option+'」，已停止。');
-      }
-      return readCounts(panel);
-    }
-    async function merchantSale(){
-      const pending=scanSnapshot?.complete && scanSnapshot.version===POLICY_VERSION
-        ? scanSnapshot.items.filter(item=>item.shouldProtect && !item.protected)
-        : [];
-      if(pending.length)throw Error('掃描顯示 '+pending.length+' 件傳說前十裝備還沒保護。請先按「② 確認前10保護」，重新掃描核對後再販賣。');
-      const panel=merchantPanel();
-      if(!panel)throw Error('尚未找到礦石商人的「販賣／一鍵販賣」頁面。');
-      const counts=checkAllFive(panel);
-      const detail=GRADES.map(k=>k+' '+(counts[k]??'?')).join('／');
-      const total=Object.values(counts).every(Number.isFinite)?
-        Object.values(counts).reduce((a,b)=>a+b,0):null;
-      if(panel.button.disabled || total===0){
-        routeStatus('已勾選五種品質，但目前可一鍵販賣數量為 0（或按鈕不可用）。不執行販賣。');
-        return {sold:false,empty:true};
-      }
-      const accepted=window.confirm('確認執行遊戲「一鍵販賣」？\\n五品質全勾：'+detail+
-        '\\n只有遊戲已保護／穿戴的裝備會依商人規則排除，未保護的傳說也可能被賣掉；不勾「包含已插卡／已精煉」。\\n這會實際出售遊戲裝備且可能無法復原，是否繼續？');
-      if(!accepted)throw Error('你已取消販賣；沒有點擊一鍵販賣。');
-      const before=panel.button;
-      if(!before.isConnected || before.disabled)throw Error('一鍵販賣按鈕狀態改變，已停止。');
-      const still=merchantPanel();
-      if(!still||still.button!==before)throw Error('商人介面變動，請重新確認。');
-      for(const grade of GRADES){
-        if(!gradeInput(still.root,grade)?.checked)throw Error('販賣前勾選狀態變動：'+grade);
-      }
-      before.click();
-      await merchantPause(750);
-      routeStatus('已按遊戲「一鍵販賣」。若跳出額外確認視窗，請人工確認；未在此代按未知按鈕。');
-      return {sold:true,empty:false};
-    }
-    function shopVisible(){return !!merchantPanel();}
-    async function waitMerchant(timeoutMs=6500){
-      const until=Date.now()+timeoutMs;
-      while(Date.now()<until){
-        if(routeStop)throw Error('已停止');
-        if(shopVisible())return true;
-        await merchantPause(180);
-      }
-      return false;
-    }
-    async function replaySegments(segments,reverse=false){
-      const sequence=reverse?[...segments].reverse().map(x=>({keys:x.keys.map(k=>OPPOSITE[k]).filter(Boolean),ms:x.ms})):segments;
-      for(let i=0;i<sequence.length;i++){
-        if(routeStop)throw Error('你已停止商人流程');
-        if(document.hidden)throw Error('瀏覽器分頁已切換，移動中止');
-        if(shopVisible())throw Error('商人介面尚未關閉，禁止自動移動');
-        const seg=sequence[i];
-        setKeys(seg.keys);
-        routeStatus((reverse?'返回原點':'前往商人')+' '+(i+1)+'/'+sequence.length+' 段');
-        let remaining=Math.min(15000,seg.ms);
-        if(seg.ms>15000)throw Error('單段移動超過 15 秒，為安全停止');
-        while(remaining>0){
-          if(routeStop)throw Error('使用者停止');
-          const tick=Math.min(180,remaining);
-          await merchantPause(tick);remaining-=tick;
-        }
-      }
-      stopKeys();
-    }
-    function npcClick(){
-      const pos=storedRoute?.click;
-      if(!pos)return false;
-      let node=pos.id?document.getElementById(pos.id):null;
-      if(!node||!node.getClientRects().length){
-        node=[...document.querySelectorAll(pos.tag==='canvas'?'canvas':'#stage')].find(e=>e.getClientRects().length);
-      }
-      if(!node||pane.contains(node))return false;
-      const r=node.getBoundingClientRect(),x=r.left+r.width*pos.x,y=r.top+r.height*pos.y;
-      if(!Number.isFinite(x)||!Number.isFinite(y))return false;
-      const target=document.elementFromPoint(x,y)||node;
-      if(pane.contains(target)||target.closest?.('button,input,select,textarea'))return false;
-      for(const type of ['pointerdown','mousedown','pointerup','mouseup','click']){
-        const Opt=type.startsWith('pointer')&&typeof PointerEvent==='function'?PointerEvent:MouseEvent;
-        target.dispatchEvent(new Opt(type,{bubbles:true,cancelable:true,clientX:x,clientY:y,button:0,buttons:type.endsWith('down')?1:0}));
-      }
-      return true;
-    }
-    async function closeMerchant(){
-      const panel=merchantPanel();if(!panel)return true;
-      // 僅使用明確標示的「關閉」按鈕，不能隨便點按商城的確認／購買操作。
-      const candidates=[...panel.root.querySelectorAll('button')];
-      const button=candidates.find(b=>{
-        const text=(b.textContent||'').trim();
-        const title=(b.getAttribute('title')||b.getAttribute('aria-label')||'').trim();
-        return /^(關閉|×|✕|X)$/iu.test(text)||/^(關閉|關閉商人)$/u.test(title);
+    async function closeShop(){
+      const p=panel();if(!p)return true;
+      const btn=[...p.root.querySelectorAll('button')].find(b=>{
+        const label=norm(textOf(b)),title=norm(b.getAttribute('title')||b.getAttribute('aria-label')||'');
+        return /^(關閉|✕|×|X)$/iu.test(label)||/^(關閉|關閉商人)$/u.test(title);
       });
-      if(button&&!button.disabled){button.click();await merchantPause(450);}
-      return !shopVisible();
+      if(btn&&!btn.disabled){btn.click();await sleep(500);}
+      return !shopOpen();
     }
-    async function execute(action){
-      if(routeBusy||running||learning)return;
-      routeBusy=true;routeStop=false;buttons();
+    async function operate(action){
+      if(!isReady())return;
+      busy=true;stopped=false;refresh();
       try{
-        if(action==='return'){
-          if(!storedRoute)throw Error('尚未錄製去程路線');
-          if(!await closeMerchant())throw Error('商人視窗尚未關閉，請先手動關閉，再按「返回原點」。');
-          await replaySegments(storedRoute.segments,true);
-          routeStatus('返程重播完成。請核對角色是否回到原點；障礙物與伺服器延遲可能造成偏差。');
+        if(action==='go'){
+          await walk(false);
+          if(!await openShop())throw Error('已走到商人附近，但未能開啟「販賣」頁；請手動點礦石商人。');
+          inform('已抵達並開啟商人「販賣」頁，可按「商人已開：販賣」。');
           return;
         }
-        if(action==='full'&&!shopVisible()){
-          if(!storedRoute)throw Error('尚未學習原點到商人的路線');
-          await replaySegments(storedRoute.segments,false);
-          if(routeStop)throw Error('已停止');
-          npcClick();
-          const opened=await waitMerchant(6500);
-          if(!opened)throw Error('已重播去程，但未偵測到商人視窗。請自己靠近商人並點開對話，再按「商人已開：販賣」。');
+        if(action==='back'){
+          if(!await closeShop())throw Error('商人頁還開著，請先關閉再返程。');
+          await walk(true);
+          inform('已送出 ←13、↑9；請核對是否回到原點。');
+          return;
         }
-        const result=await merchantSale();
-        if(action==='full' && storedRoute){
-          if(!await closeMerchant()){
-            routeStatus('販賣流程結束，但商人視窗未能安全關閉。請關閉後按「↩ 返回原點」。');
-            return;
+        if(action==='sell'){
+          await sellNow();
+          return;
+        }
+        if(action==='full'){
+          if(!shopOpen()){
+            await walk(false);
+            if(!await openShop())throw Error('已走到商人附近，但未能開啟販賣頁，請手動開啟後按「商人已開：販賣」。');
           }
-          await replaySegments(storedRoute.segments,true);
-          routeStatus((result.empty?'本次無可販賣裝備；':'一鍵販賣已操作；')+
-            '返程移動已完成。請確認原點位置，腳本無法保證避障或精確對位。');
+          const result=await sellNow();
+          if(!await closeShop())throw Error('商人視窗沒有關閉，已停止返程，請手動關閉。');
+          await walk(true);
+          inform((result.empty?'沒有可賣裝備；':'已按下全部賣掉；')+'已送出 ←13、↑9，請核對返回位置。');
         }
-      }catch(err){
-        routeStatus('已停止：'+String(err?.message||err));
-        console.warn('[HANS 商人販賣／移動]',err);
-      }finally{stopKeys();routeBusy=false;buttons();}
+      }catch(e){
+        inform('停止：'+String(e?.message||e));
+        console.warn('[HANS 礦石商人固定路線]',e);
+      }finally{release();busy=false;refresh();}
     }
-    run.onclick=()=>execute('full');
-    sell.onclick=()=>execute('sell');
-    back.onclick=()=>execute('return');
-    halt.onclick=()=>{
-      if(learning){learning=null;routeStatus('已取消錄製，舊路線維持不變。');}
-      routeStop=true;stopKeys();buttons();
-    };
+    buttons.go.onclick=()=>operate('go');
+    buttons.back.onclick=()=>operate('back');
+    buttons.sell.onclick=()=>operate('sell');
+    buttons.full.onclick=()=>operate('full');
+    buttons.stop.onclick=()=>{stopped=true;release();inform('已請求停止；鬆開所有方向鍵。');};
+    refresh();
   }
 
   initMerchantRoute();

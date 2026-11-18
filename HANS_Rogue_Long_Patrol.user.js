@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         HANS RO｜流氓長場巡走＋磁鐵｜前3分鐘不停＋Lv130後寶箱自動繼續保存
+// @name         HANS RO｜流氓長場巡走＋磁鐵｜前3分鐘不停＋Lv120後寶箱自動繼續保存
 // @namespace    hunghung-ro-local-tools
-// @version      2.3.6
-// @description  v2.3.6：已保存卡片>5啟動開卡，達Lv130立即停止並在升級/寶箱畫面按「繼續保存」；沒達130則開到0張，原巡走不變。
+// @version      2.3.7
+// @description  v2.3.7：進場卡片>5張開始開卡，人物達Lv120(含)立即停止並於升級/寶箱畫面按「繼續保存」；未達120繼續開到0張，巡走不變。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        none
@@ -21,7 +21,7 @@
     tickMs:140, clockPollMs:400, firstPatrolUntilS:180, magnetMinutes:[115,175,355],
     repeatStartS:475, repeatEveryS:120, repeatLastS:835, bossMagnetRetryMs:2200,
     finalBossSeconds:15,
-    levelSkip:130, magnetSearchMaxMs:35000, pickupConfirmMs:550,
+    levelSkip:120, magnetSearchMaxMs:35000, pickupConfirmMs:550,
     magnetReach:3.4, homeReach:2.8, magnetRadius:68,
     returnMaxMs:42000, progressTimeoutMs:2800, detourMs:850,
     maxDetours:4, magnetTargetStallMs:3000, patrolStepMs:1050, missedWindowS:10
@@ -42,9 +42,9 @@
   };
   const button=document.createElement('button');
   button.id=UI_ID;button.type='button';
-  button.dataset.hansScriptVersion='2.3.6';
+  button.dataset.hansScriptVersion='2.3.7';
   button.style.cssText='position:fixed;left:8px;bottom:198px;z-index:2147483647;background:#384455;color:#fff;border:1px solid #eee;border-radius:5px;padding:5px 8px;font:12px system-ui,sans-serif;cursor:pointer;max-width:min(360px,80vw);text-align:left';
-  button.title='Shift+8 流氓長場：前3分鐘持續巡走（1:55／2:55照常尋磁鐵），3:00後返點恢復原版站打、磁鐵與安全停靠；Boss最後15秒只找磁鐵、Lv130後寶箱自動繼續保存。';
+  button.title='Shift+8 流氓長場：前3分鐘持續巡走（1:55／2:55照常尋磁鐵），3:00後返點恢復原版站打、磁鐵與安全停靠；Boss最後15秒只找磁鐵、Lv120後寶箱自動繼續保存。';
   button.setAttribute('aria-keyshortcuts','Shift+8');
   document.body?.appendChild(button);
   function status(s){button.textContent='HANS 流氓巡走｜'+s;}
@@ -59,7 +59,7 @@
     patrolStep:0,patrolUntil:0,target:null,bestGap:Infinity,progressAt:0,
     detours:0,detourKey:'',detourUntil:0,seekAt:0,returnAt:0,returnBest:Infinity,
     returnProgressAt:0,returnDetours:0,returnDetourUntil:0,returnDetourKey:'',
-    magnetObserved:null,blocked:[],level130Reached:false,savePending:null,savedOpen:{count:null,tries:0,lastAt:0,blocked:false,draining:false},failed:false,
+    magnetObserved:null,blocked:[],level120Reached:false,savePending:null,savedOpen:{count:null,tries:0,lastAt:0,blocked:false,draining:false},failed:false,
     homeFallbacks:0,usingFallbackHome:false,finalPicked:0
   };
   function move(keys=''){
@@ -137,7 +137,7 @@
       bestGap:Infinity,progressAt:0,detours:0,detourKey:'',detourUntil:0,
       seekAt:0,returnAt:0,returnBest:Infinity,returnProgressAt:0,
       returnDetours:0,returnDetourUntil:0,returnDetourKey:'',magnetObserved:null,
-      blocked:[],level130Reached:false,savePending:null,savedOpen:{count:null,tries:0,lastAt:0,blocked:false,draining:false},failed:false,
+      blocked:[],level120Reached:false,savePending:null,savedOpen:{count:null,tries:0,lastAt:0,blocked:false,draining:false},failed:false,
       homeFallbacks:0,usingFallbackHome:false,finalPicked:0
     });
   }
@@ -329,7 +329,7 @@
     return {panel:p,level:Number(m[1])};
   }
   // 每場開局早期，若積存升級卡超過 5 張則開啟(B)。
-  // 僅處理「卡片」數量，不把「寶箱」算進門檻，也不碰 Lv130 的保存功能。
+  // 僅處理「卡片」數量，不把「寶箱」算進門檻，也不碰 Lv120 的保存功能。
   function savedCardsEntry(){
     const buttons=[...document.querySelectorAll('button,[role="button"]')];
     for(const button of buttons){
@@ -348,9 +348,9 @@
   function maybeOpenSavedCards(seconds){
     if(!round.started||!Number.isFinite(seconds)||seconds<0)return false;
     const state=round.savedOpen;
-    // 人物等級達 Lv130 優先於「整批開到0張」，剩餘卡片直接保留。
-    if(round.level130Reached || (Number.isFinite(topLeftLevel())&&topLeftLevel()>=OPT.levelSkip)){
-      round.level130Reached=true;
+    // 人物等級達 Lv120 優先於「整批開到0張」，剩餘卡片直接保留。
+    if(round.level120Reached || (Number.isFinite(topLeftLevel())&&topLeftLevel()>=OPT.levelSkip)){
+      round.level120Reached=true;
       state.draining=false;
       return false;
     }
@@ -389,9 +389,9 @@
     return true;
   }
 
-  // 自動 Lv130 後的寶箱流程：
+  // 自動 Lv120 後的寶箱流程：
   // 舊版會在升級畫面按「之後不再翻牌」；新版完全不按那個按鈕。
-  // 只有本場已明確確認 >=Lv130，且目前是寶箱頁時才按「繼續保存」。
+  // 只有本場已明確確認 >=Lv120，且目前是寶箱頁時才按「繼續保存」。
   function topLeftLevel(){
     for(const el of document.querySelectorAll('span,b,strong,div')){
       if(el.childElementCount>1||!visible(el)||el.closest('#picker,#'+UI_ID))continue;
@@ -427,14 +427,14 @@
   }
   function maybeContinueSaving(){
     if(!round.started)return false;
-    // Lv130 是本場「停止開卡」的最高優先條件；
+    // Lv120 是本場「停止開卡」的最高優先條件；
     // 優先讀取 Level Up 顯示的等級，其次讀左上人物 Lv。
     const lv=levelUpPanel()?.level??topLeftLevel();
     if(Number.isFinite(lv)&&lv>=OPT.levelSkip){
-      round.level130Reached=true;
+      round.level120Reached=true;
       round.savedOpen.draining=false;
     }
-    if(!round.level130Reached)return false;
+    if(!round.level120Reached)return false;
     const picker=document.querySelector('#picker');
     const chooseOpen=!!picker&&visible(picker)&&(isLevelUpPicker()||isTreasurePicker());
     const btn=chooseOpen?continueSaveButton():null;
@@ -444,19 +444,19 @@
         round.savePending=null;
       }else{
         if(timeNow()-prev.at>2200)
-          status('Lv130已達｜已按「繼續保存」，等待畫面切換；不重複點擊');
+          status('Lv120已達｜已按「繼續保存」，等待畫面切換；不重複點擊');
         return true;
       }
     }
     if(!chooseOpen)return false;
     if(!btn){
-      status('Lv130已達｜等待升級/寶箱畫面出現「繼續保存」按鈕');
+      status('Lv120已達｜等待升級/寶箱畫面出現「繼續保存」按鈕');
       return true;
     }
     // 每個升級/寶箱畫面只按一次，等界面關閉或換頁才可處理下一個。
     round.savePending={at:timeNow(),button:btn};
     move();btn.click();
-    status('Lv130已達｜按「繼續保存」，停止繼續開卡');
+    status('Lv120已達｜按「繼續保存」，停止繼續開卡');
     return true;
   }
 
@@ -538,7 +538,7 @@
       if(!round.outside){resetRound();round.outside=true;}
       move();status('等待下一場');return;
     }
-    // Lv130 優先：即使此時是升級選卡、寶箱畫面、計時或小地圖暫停，
+    // Lv120 優先：即使此時是升級選卡、寶箱畫面、計時或小地圖暫停，
     // 都先按「繼續保存」，保留剩餘卡片，不再開到0張。
     if(round.started&&maybeContinueSaving()){move();return;}
     const secs=readGameTime();
@@ -548,13 +548,13 @@
       // 現在不要求前45秒啟動，5:57開啟也能從6:00磁鐵接續。
       startRound(secs);
     }
-    // 進場已保存卡片>5即啟動；在Lv130之前逐張處理，
-    // 若尚未達Lv130就持續到0張，達Lv130立即保存剩餘卡片。
+    // 進場已保存卡片>5即啟動；在Lv120之前逐張處理，
+    // 若尚未達Lv120就持續到0張，達Lv120立即保存剩餘卡片。
     if(maybeOpenSavedCards(secs)){move();return;}
     // Boss 結束時 HUD 也可能跳回 0:15，不能把它誤認為下一場開局。
     // 正常重進經過主城／選關時會由 outsideRun 重設，這裡不憑時間跳轉重新開場。
     round.prevSeconds=round.seconds;round.seconds=normalizeCombatSeconds(secs);
-    // Lv130 後寶箱「繼續保存」已在小地圖座標檢查之前處理。
+    // Lv120 後寶箱「繼續保存」已在小地圖座標檢查之前處理。
     if(busy()||document.activeElement?.matches?.('input,textarea,select,[contenteditable="true"]')){
       move();return;
     }

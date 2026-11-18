@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HANS RO｜逐件裝備巡檢＋GS前十保護＋Discord完整紀錄
 // @namespace    https://ro.hans-webgametw.com/
-// @version      2.1.1
+// @version      2.1.2
 // @description  逐件開啟背包詳情，完整記錄名稱/UID/位置/部位/GS/Tier/詞綴/卡片/保護狀態；可發 Discord；各部位前10保護需另行確認。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        GM_getValue
@@ -30,7 +30,7 @@
   let scanMeta = {total:0, eligible:0, ignoredE:0};
   const HOOK_KEY = 'hans-ro-v2-discord-webhook';
   const SCAN_KEY = 'hans-ro-v2-last-full-inventory-scan';
-  const savedHook = () => String(GM_getValue(HOOK_KEY, '') || '').trim();
+  const savedHook = () => String(GM_getValue(HOOK_KEY, '') || GM_getValue('hans_ro_discord_webhook_private', '') || '').trim();
   const validHook = s => /^https:\/\/(?:discord\.com|discordapp\.com)\/api\/webhooks\/\d+\/[A-Za-z0-9_-]+(?:\?.*)?$/.test(s);
   const nowString = () => new Date().toLocaleString('zh-TW', {hour12:false});
   const positionOf = (cells) => {

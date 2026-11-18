@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜逐件裝備巡檢＋GS前十保護＋Discord完整紀錄
 // @namespace    https://ro.hans-webgametw.com/
-// @version      2.2.0
-// @description  V2.2.0：武器只留法杖，另保留頭上中下、披肩、飾品、鞋子、盾牌、鎧甲各GS前10；E不掃描不操作；先預覽、再確認保護。
+// @version      2.2.1
+// @description  V2.2.1：Discord只傳一則簡短掃描摘要；保留本機逐件詳細紀錄、法杖及各部位GS前10與E排除規則。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -18,7 +18,7 @@
   const ID = 'hans-top10-protect-v200'; // 沿用 ID，避免與舊版面板並存
   if (document.getElementById(ID)) return;
   const LIMIT = 10;
-  const POLICY_VERSION = '2.2.0';
+  const POLICY_VERSION = '2.2.1';
   const ALLOWED_SLOTS = Object.freeze(['武器','頭部（上）','頭部（中）','頭部（下）','披肩','飾品','鞋子','盾牌','鎧甲']);
   // 只有名稱明確符合「杖」型且未標記為職業無法使用的武器才能參與武器前十。
   function isStaffWeapon(r) {
@@ -58,15 +58,15 @@
   const pane = document.createElement('section');
   pane.id = ID;
   pane.innerHTML = `
-    <div class="hp-title"><strong>HANS｜法師裝備前10巡檢 V2.2.0</strong><button id="hp-toggle" title="收合/展開">−</button></div>
+    <div class="hp-title"><strong>HANS｜法師裝備前10巡檢 V2.2.1</strong><button id="hp-toggle" title="收合/展開">−</button></div>
     <div id="hp-body">
       <div class="hp-sub">主城按 C → 背包 → 全部；E 穿戴品完全跳過。只保留法杖、頭上/中/下、披肩、飾品、鞋子、盾牌、衣服（鎧甲）。</div>
-      <div class="hp-sub">先逐件掃描所有非 E 裝備並預覽：只有「法杖」進武器GS前10，其他八個部位各留GS前10；非杖武器歸排除。取消保護／保護需另行按確認，絕不丟棄或販賣。</div>
+      <div class="hp-sub">逐件掃描非 E 裝備：只有法杖進武器 GS 前10，其他八部位各留 GS 前10。Discord 只傳一則簡短統計；完整逐件資料留本機 CSV／JSON。保護需另按確認。</div>
       <div class="hp-bar"><button id="hp-scan">① 掃描非 E 裝備</button><button id="hp-scan-dc">① 掃描非 E＋傳 DC</button></div>
       <div class="hp-bar"><button id="hp-apply" disabled>② 確認前10保護</button><button id="hp-stop" disabled>停止</button></div>
       <div class="hp-sub"><b>Discord Webhook（只保存在本機 Tampermonkey）：</b></div>
       <div class="hp-bar"><input id="hp-hook" type="password" placeholder="貼入 Webhook URL，不要貼到聊天" autocomplete="off"><button id="hp-save-hook">儲存</button></div>
-      <div class="hp-bar"><button id="hp-send" disabled>傳送上次完整掃描</button><button id="hp-export" disabled>匯出 CSV</button><button id="hp-json" disabled>匯出 JSON</button></div>
+      <div class="hp-bar"><button id="hp-send" disabled>傳送掃描摘要</button><button id="hp-export" disabled>匯出 CSV</button><button id="hp-json" disabled>匯出 JSON</button></div>
       <div id="hp-status">等待：請打開背包「全部」。</div>
       <div id="hp-discord">Discord：未傳送</div>
       <div id="hp-report"></div>
@@ -338,34 +338,28 @@
     }
   }
 
-  const discordTextOf = (r) => {
-    const header=`【背包第 ${r.index} 格／第${r.row}列第${r.col}欄】${r.groupLabel || r.slot}｜GS ${r.gs}｜Tier ${r.tier}｜非 E｜${r.protected?'已保護':'未保護'}｜名次 ${r.rank ?? '排除'}｜預覽：${r.action}${r.reason?'｜'+r.reason:''}`;
-    return header+'\nUID: '+r.uid+'\n圖示: '+(r.icon||'未讀取')+'\n其他圖片/卡片: '+JSON.stringify(r.cardImages||[])+'\n'+(r.detailText||'無詳情').trim();
-  };
+  // Discord 僅傳一則輕量摘要；逐件完整紀錄仍留在掃描快照／CSV／JSON。
   function chunksOfReport(snapshot){
-    const groups=new Map();for(const r of snapshot.items){const key=r.groupLabel || r.slot;(groups.get(key)||groups.set(key,[]).get(key)).push(r)}
-    const date=nowString();
-    const summary=[`🔍 HANS RO 非 E 裝備完整巡檢｜${date}`,
-      `背包共 ${snapshot.expectedCount} 件｜E 穿戴已跳過 ${snapshot.skippedEquippedCount} 件（完全未點選或修改）`,
-      `非 E 逐件掃描 ${snapshot.scannedCount}/${snapshot.eligibleCount} 件｜非 E 保護中 ${snapshot.items.filter(x=>x.protected).length}`,
-      `保留規則：武器只留法杖，其他指定八部位各保留 GS 前10。非杖武器 ${snapshot.items.filter(x=>x.slot==='武器' && x.reason).length} 件不納入排名；先預覽再確認。`,
-      `只有非 E 裝備逐件點開右側詳情。這是「目前非 E 背包快照」，不是掉落歷史。`,
-      ...[...groups].map(([slot,a])=>`${slot}: ${a.length} 件｜最高 GS ${Math.max(...a.map(x=>x.gs))}`),
-      `共 ${snapshot.items.length} 件，後續訊息逐件含背包位置／UID／屬性／卡片資訊。`].join('\n');
-    const messages=[summary];
-    let cur='';
-    for(let i=0;i<snapshot.items.length;i++){
-      const r=snapshot.items[i];
-      const piece=`[${i+1}/${snapshot.items.length}]\n`+discordTextOf(r)+'\n';
-      // Discord 的 content 上限 2000 字；每件原始詳情較長時拆成多段，絕不遺漏。
-      const lines=piece.match(/[\s\S]{1,1600}/g)||[''];
-      for(const part of lines){
-        if(cur && (cur+'\n\n'+part).length>1770){messages.push(cur);cur='';}
-        cur+= (cur?'\n\n':'')+part;
-      }
-    }
-    if(cur)messages.push(cur);
-    return messages;
+    const items=snapshot.items || [];
+    const countSlot=slot=>items.filter(r=>r.slot===slot).length;
+    const staff=items.filter(r=>r.slot==='武器' && !r.reason).length;
+    const otherWeapons=items.filter(r=>r.slot==='武器' && !!r.reason).length;
+    const actions={protect:items.filter(r=>r.action==='保護').length,
+      unprotect:items.filter(r=>r.action==='取消保護').length,
+      unchanged:items.filter(r=>r.action==='保持').length};
+    const lines=[
+      '🔎 HANS RO 裝備掃描｜'+nowString(),
+      '背包 '+snapshot.expectedCount+' 件｜E 跳過 '+snapshot.skippedEquippedCount+' 件｜掃描 '+snapshot.scannedCount+'/'+snapshot.eligibleCount+' 件',
+      '武器：法杖 '+staff+'｜其他武器 '+otherWeapons+'（排除）',
+      '頭上 '+countSlot('頭部（上）')+'｜頭中 '+countSlot('頭部（中）')+'｜頭下 '+countSlot('頭部（下）'),
+      '披肩 '+countSlot('披肩')+'｜飾品 '+countSlot('飾品')+'｜鞋子 '+countSlot('鞋子'),
+      '盾牌 '+countSlot('盾牌')+'｜衣服 '+countSlot('鎧甲'),
+      '預計保護 '+actions.protect+'｜取消保護 '+actions.unprotect+'｜保持 '+actions.unchanged,
+      '⚠️ 以上僅為預覽，尚未執行保護調整。'
+    ];
+    const summary=lines.join('\n');
+    if(summary.length>1900)throw Error('摘要長度異常，為避免過長已停止傳送。');
+    return [summary];
   }
   function postWebhook(url, content){
     return new Promise((resolve,reject)=>{
@@ -391,7 +385,7 @@
     if(!validHook(hook)){
       latestDiscord='尚未傳送：請先在面板儲存 Discord Webhook。';
       $('hp-discord').textContent='Discord：'+latestDiscord;
-      status('掃描已保存在本機。先儲存 Discord Webhook，再按「傳送上次完整掃描」。');
+      status('掃描已保存在本機。先儲存 Discord Webhook，再按「傳送掃描摘要」。');
       return;
     }
     const messages=chunksOfReport(snapshot);let delivered=0;
@@ -415,7 +409,7 @@
       }
       latestDiscord=`完成：非 E ${snapshot.items.length} 件，E 略過 ${snapshot.skippedEquippedCount} 件，合計 ${delivered} 段（${nowString()}）。`;
       $('hp-discord').textContent='Discord：'+latestDiscord;
-      status('Discord 已完成整份紀錄傳送。掃描資料與匯出檔仍保存在本機。');
+      status('Discord 已傳送簡短掃描摘要；完整逐件資料仍可在本機匯出 CSV／JSON。');
     }catch(e){
       latestDiscord=`中斷：已傳 ${delivered}/${messages.length} 段；${String(e.message||e)}`;
       $('hp-discord').textContent='Discord：'+latestDiscord;

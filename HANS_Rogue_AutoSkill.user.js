@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 盜賊→流氓｜六核心自動選技＋優先放逐＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.1.5
-// @description  流氓v1.1.5：修正技能5/5時因圖示無名稱或普攻判斷失準而不放逐；5/5後先放逐非刀扇卡再選刀扇，未滿5格禁止放逐。
+// @version      1.1.6
+// @description  流氓v1.1.6：以選卡畫面技能5/5判定放逐階段；三張卡除了刀扇全部優先放逐，放逐無法操作時顯示診斷；未滿5/5禁止放逐。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
 // @run-at       document-idle
@@ -15,7 +15,7 @@
   const id = 'hans-rogue-autoskill-v100';
   if (document.getElementById(id)) return;
   const label = '流氓';
-  const version = '1.1.5';
+  const version = '1.1.6';
   const potion = [/傷害藥水|damage potion|potion of damage/i, /範圍藥水|area potion|potion of area/i];
   const normalize = s => String(s||'').normalize('NFKC').replace(/\s+/g,' ').trim();
   const read = (el,selector) => normalize(el?.querySelector(selector)?.textContent||'');
@@ -73,8 +73,18 @@
   }
   function slotInfo(panel){
     const sockets=panel.querySelector('#lu-sockets')||document.querySelector('#lu-sockets');
-    const txt=normalize(sockets?.textContent);
-    const m=txt.match(/(?:技能|skills?)?\s*(\d+)\s*\/\s*(\d+)/i);
+    // 5/5 可能位於 #lu-sockets 的父層或選卡面板標頭，而非圖示容器本身。
+    // 使用「技能 5/5」明確文字，避免被不同版本的 DOM 結構卡死。
+    const headerTexts=[
+      sockets?.textContent,
+      sockets?.parentElement?.textContent,
+      panel.querySelector('#lu-sockets')?.parentElement?.textContent,
+      panel.querySelector('#pk-bar')?.textContent,
+      panel.textContent
+    ].filter(Boolean).map(normalize);
+    const m=headerTexts.map(t=>t.match(/(?:技能|skills?)\s*(\d+)\s*\/\s*(\d+)/i))
+      .find(Boolean)||null;
+    const txt=headerTexts[0]||'';
     const slots=[...(sockets?.querySelectorAll('.skill-slot')||[])];
     const empty=!!sockets?.querySelector('.skill-slot.empty,.skill-slot[data-skill=""],.skill-slot:not([data-skill])');
     const full=m?Number(m[1])>=Number(m[2]):slots.length>=5&&!empty;
@@ -103,16 +113,15 @@
     }
     // 防止錯把虛擬卡片/武器圖示也當成主動技能：需要五個不同核心逐格辨識。
     const coreSlotsVerified=slots.length>=5 && skills.every(skill=>owned.has(skill.id));
-    const known=!!sockets&&(!!m||slots.length>0);
+    const known=!!sockets||!!m||slots.length>0;
     if(lastOwnedCount!==null && lastOwnedCount>=2 && occupied===0 && !full){
       basicLearned=false;
       diagnostic('已偵測到新場次技能欄重置；重新取得普攻第一招');
     }
     if(known)lastOwnedCount=occupied;
-    // 明確 5/5 代表主動技能欄滿；普攻是獨立的預設攻擊，
-    // 不再要求腳本曾親自選過「攻擊：大胸短劍」才能放逐。
-    // 未滿 5/5，仍需完整確認五核心及普攻才可能判定完成。
-    const ready=known&&(explicitFiveOfFive||(coreSlotsVerified&&basicLearned));
+    // 只採明確技能5/5作為放逐門檻；未滿5/5絕不放逐。
+    // 不再依靠不穩定的圖示ID或本場普攻是否由腳本親自選過。
+    const ready=explicitFiveOfFive;
     return {full,known,owned,unrecognized,occupied,coreSlotsVerified,basicLearned,
       explicitFiveOfFive,ready};
   }
@@ -253,12 +262,19 @@
   function actText(btn){return normalize([btn.getAttribute('title'),btn.getAttribute('aria-label'),btn.textContent].filter(Boolean).join(' '));}
   const banishPattern=/放逐|排除|banish|exile|desterrar|banir/i;
   function banishBtn(card){
-    const slot=card.closest('.pk-slot');
+    // 只在同一張選卡的容器裡尋找放逐，不能誤按到別張卡或全局操作。
+    // 優先 .pk-slot（與遊戲公開選卡結構一致），版本改版時再退到僅包含一張卡的父層。
+    let slot=card.closest('.pk-slot');
+    if(!slot){
+      for(let p=card.parentElement,depth=0;p&&depth<3;p=p.parentElement,depth++){
+        if(p.querySelectorAll('.pk-card').length===1 &&
+          p.querySelectorAll('button,[role="button"]').length>=2){slot=p;break;}
+      }
+    }
     if(!slot||slot.classList.contains('asking'))return null;
-    // 更新後有些按鈕沒有 .pk-act；可回退使用本卡片區塊內的按鈕文字辨識。
-    return [...slot.querySelectorAll('button,[role="button"]')].find(btn=>btn!==card &&
-      shown(btn) && !String(btn.dataset.act||'').startsWith('bar:') &&
-      banishPattern.test(actText(btn)))||null;
+    return [...slot.querySelectorAll('button.pk-act,button,[role="button"]')].find(btn=>btn!==card &&
+      shown(btn)&&!String(btn.dataset?.act||'').startsWith('bar:') &&
+      banishPattern.test(actText(btn)+' '+String(btn.dataset?.act||'')))||null;
   }
   function rerollAllBtn(panel){
     const buttons=[...panel.querySelectorAll('#pk-bar button,.pk-acts button,.pk-actions button,#picker button')];
@@ -275,13 +291,15 @@
   function diagnostic(s){
     if(s===lastMsg)return;
     lastMsg=s;
-    if(button)button.title='Shift+2 切換｜'+s;
+    if(button){
+      button.title='Shift+2 切換｜'+s;
+      button.dataset.hansScriptStatus=s; // 診斷狀態留在原始模組按鈕，控制中心可讀取
+    }
     console.info('[HANS 流氓 v'+version+'] '+s);
   }
   function tryBanish(cards,info){
-    // 以技能欄「5/5」直接進入放逐階段；不再受限於無法取得的圖示名稱。
-    // 在未滿五格時，只有五核心與普攻都已明確核實才能進入；永不提前放逐。
-    if(!info.ready || !(info.explicitFiveOfFive || (info.coreSlotsVerified&&info.basicLearned)))return false;
+    // 使用者規則：選滿5/5，所有非刀扇卡先放逐；未滿5/5一律禁止放逐。
+    if(!info.explicitFiveOfFive)return false;
     // 六招已齊後，除了刀扇以外的任何當前卡片都可以放逐；
     // 包含已學核心的升級卡（施毒／投石／潛擊／鐵蒺藜／普攻）。
     // 影步、背刺仍優先放逐；刀扇永遠不可放逐。
@@ -314,7 +332,17 @@
       btn.click();return true;
     }
     if(failedClicks){
-      diagnostic('放逐點擊未成功：暫停選刀扇，請檢查遊戲畫面中的放逐按鈕');
+      diagnostic('放逐點擊未成功：停止選刀扇，請檢查放逐按鈕');
+      return true;
+    }
+    // 如果畫面仍有啟用中的「放逐」文字，但找不到對應卡片，不能跳過去選刀扇。
+    const panel=cards[0]?.closest('#picker');
+    const unbound=panel && [...panel.querySelectorAll('button.pk-act,button,[role="button"]')]
+      .some(btn=>shown(btn)&&banishPattern.test(actText(btn))&&
+        !String(btn.dataset?.act||'').startsWith('bar:')&&
+        !/放逐\s*0\b/i.test(actText(btn)));
+    if(unbound&&ranked.length){
+      diagnostic('技能5/5，但放逐按鈕未能對應選卡；暫停選刀扇');
       return true;
     }
     return false;
@@ -392,7 +420,7 @@
     const info=slotInfo(panel);
     // 例：遊戲顯示「技能 5/5」卻仍缺刀扇；這一局不可用放逐補救已佔用的技能欄。
     if(info.full && !info.ready){
-      diagnostic('技能欄已滿，但尚未得到明確5/5及核心資訊；等待，不消耗放逐');
+      diagnostic('技能欄可能已滿，但選卡標頭未讀到「技能5/5」；暫停放逐以免誤觸');
       return;
     }
     if(info.ready){
@@ -427,7 +455,7 @@
     clearInterval(timer);timer=on?setInterval(safeTick,400):null;
     if(button){button.textContent=label+'選技：'+(on?'開':'關')+' v'+version;
       button.style.background=on?'#186442':'#384455';}
-    diagnostic(on?'已啟動（5/5先放逐非刀扇，再選刀扇；未滿不放逐）':'已停用，Shift+2 可啟動');
+    diagnostic(on?'已啟動（技能5/5先放逐所有非刀扇卡，最後選刀扇）':'已停用，Shift+2 可啟動');
   }
   function mount(){
     if(!document.body){setTimeout(mount,100);return;}

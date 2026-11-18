@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HANS RO 盜賊→流氓｜六核心自動選技＋優先放逐＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.1.2
+// @version      1.1.3
 // @description  流氓v1.1.2：修正缺核心時誤選非核心填滿5格；未證實五個主動核心+普攻前絕不放逐；滿格缺招停止而不浪費資源。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
@@ -15,7 +15,7 @@
   const id = 'hans-rogue-autoskill-v100';
   if (document.getElementById(id)) return;
   const label = '流氓';
-  const version = '1.1.2';
+  const version = '1.1.3';
   const potion = [/傷害藥水|damage potion|potion of damage/i, /範圍藥水|area potion|potion of area/i];
   const normalize = s => String(s||'').normalize('NFKC').replace(/\s+/g,' ').trim();
   const read = (el,selector) => normalize(el?.querySelector(selector)?.textContent||'');
@@ -403,6 +403,7 @@
     if(!document.body){setTimeout(mount,100);return;}
     if(document.getElementById(id))return;
     button=document.createElement('button');button.type='button';button.id=id;
+    button.dataset.hansScriptVersion=version;
     button.style.cssText='position:fixed;left:8px;bottom:126px;z-index:2147483647;color:white;border:1px solid white;border-radius:5px;padding:5px 8px;cursor:pointer';
     button.onclick=()=>{const on=timer===null;if(on)document.dispatchEvent(new Event('ro-profile-selected'));enable(on);};
     button.setAttribute('aria-keyshortcuts','Shift+2');

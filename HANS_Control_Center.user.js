@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜左側控制中心｜巡走＋選技（模組獨立）
 // @namespace    hunghung-ro-local-tools
-// @version      1.0.3
-// @description  v1.0.3：左側每支腳本顯示實際載入版本，不拿GitHub最新版本冒充本機；無版本回報顯示v?，仍保留獨立模組、原快捷鍵與精簡版面。
+// @version      1.0.4
+// @description  v1.0.4：左側下方新增即時巡走資訊：目前執行動作、實際遊戲時間、下次磁鐵出發時間與倒數、選技狀態；直接讀已載入腳本，模組保持獨立。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-start
 // @grant        none
@@ -14,7 +14,7 @@
   'use strict';
   const ROOT_ID='hans-left-control-center-v100';
   const CSS_ID='hans-left-control-center-css-v100';
-  const HUB_VERSION='1.0.3';
+  const HUB_VERSION='1.0.4';
   const SAVED_KEY='hans-ro-left-control-center-v101';
   const PREVIOUS_SAVED_KEY='hans-ro-left-control-center-v100';
   const MODULES=Object.freeze([
@@ -40,6 +40,7 @@
   const stored=load();
   let expanded=stored.expanded===true;
   let root=null,body=null,foldButton=null,headerText=null,summary=null;
+  let liveCurrent=null,liveClock=null,liveNext=null,liveSkill=null,liveMode=null;
   let drag=null;
   const rows=new Map();
   const groups=new Map();
@@ -59,7 +60,7 @@
     'padding:6px;background:#213c59;user-select:none;touch-action:none;cursor:move}'+
     '#'+ROOT_ID+' .hans-hub-fold{background:#345d85;color:white;border:1px solid #658cb0;'+
     'border-radius:5px;padding:2px 5px;min-width:25px;min-height:24px;cursor:pointer}'+
-    '#'+ROOT_ID+' .hans-hub-content{padding:5px 6px 6px;max-height:min(315px,55vh);overflow-y:auto;overscroll-behavior:contain}'+
+    '#'+ROOT_ID+' .hans-hub-content{padding:5px 6px 6px;max-height:min(490px,75vh);overflow-y:auto;overscroll-behavior:contain}'+
     '#'+ROOT_ID+' .hans-hub-section{border-top:1px solid #40617c;padding-top:3px;margin-top:4px}'+
     '#'+ROOT_ID+' .hans-hub-caption{font-size:10px;color:#aecce7;font-weight:700;margin-bottom:3px}'+
     '#'+ROOT_ID+' .hans-hub-row{display:flex;align-items:center;gap:5px;margin-bottom:3px;min-height:27px}'+
@@ -73,7 +74,16 @@
     'height:25px;text-align:center;white-space:nowrap;'+
     'background:#384455;color:#fff;border:1px solid #849bb2;border-radius:5px;'+
     'padding:3px 5px;font-size:11px!important;line-height:1.1;font-weight:700!important}'+
-    '#'+ROOT_ID+' .hans-hub-footer{font-size:9px;color:#9fbedb;margin-top:3px}'+
+    '#'+ROOT_ID+' .hans-hub-live{border-top:1px solid #507c9b;margin-top:7px;padding:7px 3px 5px;'+
+    'background:rgba(36,60,80,.34);border-radius:0 0 6px 6px}'+
+    '#'+ROOT_ID+' .hans-hub-live-title{color:#bde5ff;font-size:11px;font-weight:700;'+
+    'display:flex;justify-content:space-between;gap:4px;margin-bottom:5px}'+
+    '#'+ROOT_ID+' .hans-hub-live-row{display:flex;align-items:flex-start;gap:7px;'+
+    'font-size:10.5px;line-height:1.5;margin:3px 0}'+
+    '#'+ROOT_ID+' .hans-hub-live-label{color:#99b5d0;flex:0 0 42px}'+
+    '#'+ROOT_ID+' .hans-hub-live-value{min-width:0;flex:1;color:#e4f1fc;overflow-wrap:anywhere}'+
+    '#'+ROOT_ID+' .hans-hub-live-highlight{color:#a2ebcf;font-weight:700}'+
+    '#'+ROOT_ID+' .hans-hub-footer{font-size:9px;color:#9fbedb;margin-top:5px}'+
     MODULES.map(m=>'#'+m.id+'{'+
       'transform:translate(-400vw,-400vh)!important;pointer-events:none!important;'+
       'opacity:0!important}').join('\n');
@@ -126,6 +136,68 @@
     const m=label.match(/(?:^|[\s｜:：])v(\d+(?:\.\d+){1,3})(?=$|[^\d])/i);
     return m?m[1]:null;
   }
+  const isEnabled=source=>!!source &&
+    /^(?:#186442|rgb\(24,\s*100,\s*66\))$/i.test(source.style.backgroundColor||'');
+  const timeStamp=seconds=>{
+    const n=Math.max(0,Math.floor(seconds));
+    return Math.floor(n/60)+':'+String(n%60).padStart(2,'0');
+  };
+  const setLine=(el,value)=>{
+    const text=String(value||'');
+    if(el&&el.textContent!==text)el.textContent=text;
+  };
+  function updateLiveStatus(){
+    if(!liveCurrent)return;
+    const patrolSpecs=MODULES.filter(m=>m.id==='hans-early-patrol-magnet-v200'||
+      m.id==='hans-rogue-long-patrol-v231');
+    const patrolling=patrolSpecs.map(spec=>({spec,source:sourceFor(spec)}))
+      .filter(x=>isEnabled(x.source));
+    const skills=MODULES.filter(m=>m.group==='選技')
+      .map(spec=>({spec,source:sourceFor(spec)})).filter(x=>isEnabled(x.source));
+    if(skills.length){
+      setLine(liveSkill,skills.map(x=>x.spec.name+' '+(runtimeVersion(x.source)?'v'+runtimeVersion(x.source):'v?')).join('／'));
+    }else setLine(liveSkill,'目前未開啟選技');
+    if(!patrolling.length){
+      setLine(liveMode,'巡走未啟用');
+      setLine(liveCurrent,skills.length?'選技腳本已開啟，等待選卡畫面':'等待開啟巡走或選技');
+      setLine(liveClock,'—');
+      setLine(liveNext,'尚未啟用長場巡走');
+      return;
+    }
+    if(patrolling.length>1){
+      setLine(liveMode,'多支巡走同時啟用');
+      setLine(liveCurrent,'請只保留一支長場巡走，避免操作衝突');
+      setLine(liveClock,'—');
+      setLine(liveNext,'排程無法確定');
+      return;
+    }
+    const {spec,source}=patrolling[0], data=source.dataset||{};
+    setLine(liveMode,spec.name);
+    const status=String(data.hansLiveStatus||source.textContent||'')
+      .replace(/^HANS(?:流氓)?巡走[｜:：]/u,'').trim();
+    setLine(liveCurrent,status.slice(0,165)||'腳本已啟用，等待狀態回報');
+    const secondsRaw=String(data.hansGameSeconds??'');
+    const reportedAt=Number(data.hansTelemetryAt);
+    const clockFresh=/^\d+$/.test(secondsRaw)&&Number.isFinite(reportedAt)&&
+      Date.now()-reportedAt>=0&&Date.now()-reportedAt<8000;
+    const gameSeconds=clockFresh?Number(secondsRaw):null;
+    setLine(liveClock,clockFresh?'本場 '+timeStamp(gameSeconds):'等待遊戲計時');
+    if(!clockFresh){
+      setLine(liveNext,'遊戲計時尚未更新，暫不顯示倒數');
+      return;
+    }
+    const kind=data.hansNextMagnetKind;
+    const nextRaw=String(data.hansNextMagnetSeconds??'');
+    if(kind==='schedule'&&/^\d+$/.test(nextRaw)){
+      const next=Number(nextRaw),left=next-gameSeconds;
+      setLine(liveNext,left>0?
+        timeStamp(next)+' 出發｜剩 '+timeStamp(left):
+        timeStamp(next)+' 出發｜接近出發時間');
+    }else if(kind==='boss'){
+      setLine(liveNext,'固定時段結束｜Boss 階段持續偵測磁鐵');
+    }else setLine(liveNext,'此巡走版本尚未回報下一次磁鐵時間');
+  }
+
   function updateView(){
     if(!root)return;
     let count=0,active=0;
@@ -177,6 +249,7 @@
     for(const section of groups.values())section.hidden=false;
     const blank=byId(ROOT_ID+'-empty');
     if(blank)blank.hidden=count!==0;
+    updateLiveStatus();
   }
   function mount(){
     if(root||!document.body){if(!document.body)setTimeout(mount,40);return;}
@@ -231,6 +304,25 @@
     empty.style.cssText='padding:8px 0;color:#c6d9eb;font-size:11px';
     empty.textContent='尚未偵測到選技或巡走模組，請確認原始腳本已啟用。';
     body.append(empty);
+    const live=document.createElement('section');live.className='hans-hub-live';
+    const liveTitle=document.createElement('div');liveTitle.className='hans-hub-live-title';
+    const liveHeading=document.createElement('span');liveHeading.textContent='● 即時動態';
+    liveMode=document.createElement('span');liveMode.textContent='等待巡走';
+    liveMode.style.cssText='color:#a0c2da;font-weight:500;text-align:right;font-size:10px';
+    liveTitle.append(liveHeading,liveMode);live.append(liveTitle);
+    function addLiveRow(label,highlight=false){
+      const row=document.createElement('div');row.className='hans-hub-live-row';
+      const key=document.createElement('span');key.className='hans-hub-live-label';key.textContent=label;
+      const value=document.createElement('span');value.className='hans-hub-live-value';
+      if(highlight)value.classList.add('hans-hub-live-highlight');
+      value.textContent='—';row.append(key,value);live.append(row);
+      return value;
+    }
+    liveCurrent=addLiveRow('目前');
+    liveClock=addLiveRow('時間');
+    liveNext=addLiveRow('磁鐵',true);
+    liveSkill=addLiveRow('選技');
+    body.append(live);
     const footer=document.createElement('div');footer.className='hans-hub-footer';
     footer.textContent='各腳本獨立更新 · 快捷鍵保留';
     body.append(footer);

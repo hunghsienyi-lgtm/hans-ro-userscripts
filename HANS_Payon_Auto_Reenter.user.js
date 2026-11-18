@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜長時間巡走＋磁鐵｜返點失敗自動安全停靠＋Lv120後寶箱自動繼續保存
 // @namespace    hunghung-ro-local-tools
-// @version      2.3.6
-// @description  v2.3.6：進場卡片>5張開始開卡，人物達Lv120(含)立即停止並於升級/寶箱畫面按「繼續保存」；未達120繼續開到0張，巡走不變。
+// @version      2.3.7
+// @description  2.3.7：人物Lv120後停止開技能卡，改抽已保存寶箱；下一箱需求低於7000 Z才繼續，>=7000 Z停止並繼續保存。原磁鐵巡走不變。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        none
@@ -21,7 +21,7 @@
     tickMs:140, clockPollMs:400, firstMinute:60, magnetMinutes:[115,175,355],
     repeatStartS:475, repeatEveryS:120, repeatLastS:835, bossMagnetRetryMs:2200,
     finalBossSeconds:15,
-    levelSkip:120, magnetSearchMaxMs:35000, pickupConfirmMs:550,
+    levelSkip:120, treasureCostLimit:7000, magnetSearchMaxMs:35000, pickupConfirmMs:550,
     magnetReach:3.4, homeReach:2.8, magnetRadius:68,
     returnMaxMs:42000, progressTimeoutMs:2800, detourMs:850,
     maxDetours:4, magnetTargetStallMs:3000, patrolStepMs:1050, missedWindowS:10
@@ -42,7 +42,7 @@
   };
   const button=document.createElement('button');
   button.id=UI_ID;button.type='button';
-  button.dataset.hansScriptVersion='2.3.6';
+  button.dataset.hansScriptVersion='2.3.7';
   button.style.cssText='position:fixed;left:8px;bottom:120px;z-index:2147483647;background:#384455;color:#fff;border:1px solid #eee;border-radius:5px;padding:5px 8px;font:12px system-ui,sans-serif;cursor:pointer;max-width:min(360px,80vw);text-align:left';
   button.title='Shift+6 長場巡走；1:55、2:55、5:55、7:55、9:55、11:55、13:55 提前找磁鐵；Boss最後倒數15秒專注追磁鐵，不返點；中途啟動立即接手；Lv120後寶箱按繼續保存。';
   button.setAttribute('aria-keyshortcuts','Shift+6');
@@ -59,7 +59,7 @@
     patrolStep:0,patrolUntil:0,target:null,bestGap:Infinity,progressAt:0,
     detours:0,detourKey:'',detourUntil:0,seekAt:0,returnAt:0,returnBest:Infinity,
     returnProgressAt:0,returnDetours:0,returnDetourUntil:0,returnDetourKey:'',
-    magnetObserved:null,blocked:[],level120Reached:false,savePending:null,savedOpen:{count:null,tries:0,lastAt:0,blocked:false,draining:false},failed:false,
+    magnetObserved:null,blocked:[],level120Reached:false,savePending:null,chestOpen:{count:null,tries:0,lastAt:0,blocked:false},savedOpen:{count:null,tries:0,lastAt:0,blocked:false,draining:false},failed:false,
     homeFallbacks:0,usingFallbackHome:false,finalPicked:0
   };
   function move(keys=''){
@@ -137,7 +137,7 @@
       bestGap:Infinity,progressAt:0,detours:0,detourKey:'',detourUntil:0,
       seekAt:0,returnAt:0,returnBest:Infinity,returnProgressAt:0,
       returnDetours:0,returnDetourUntil:0,returnDetourKey:'',magnetObserved:null,
-      blocked:[],level120Reached:false,savePending:null,savedOpen:{count:null,tries:0,lastAt:0,blocked:false,draining:false},failed:false,
+      blocked:[],level120Reached:false,savePending:null,chestOpen:{count:null,tries:0,lastAt:0,blocked:false},savedOpen:{count:null,tries:0,lastAt:0,blocked:false,draining:false},failed:false,
       homeFallbacks:0,usingFallbackHome:false,finalPicked:0
     });
   }
@@ -332,7 +332,10 @@
         const text=norm(parent.innerText||parent.textContent||'');
         if(text.length>300)break;
         const m=text.match(/已保存.{0,80}?卡片[:：]?(\d{1,5})(?=\D|$)/);
-        if(m)return {button,count:Number(m[1])};
+        if(m){
+          const chest=text.match(/已保存.{0,100}?寶箱[:：]?(\d{1,5})(?=\D|$)/);
+          return {button,count:Number(m[1]),chests:chest?Number(chest[1]):null};
+        }
       }
     }
     return null;
@@ -394,6 +397,40 @@
     }
     return null;
   }
+  // 認 HUD「寶箱 7774 Z」的下一箱需求金額；不要把「6472 Z」現有錢或
+  // 「已保存：寶箱 50」當成開箱成本。未可靠讀到金額，一律不自動開箱。
+  function nextTreasureCost(){
+    const candidates=document.querySelectorAll('span,small,b,strong,div');
+    for(const el of candidates){
+      if(el.childElementCount>3||!visible(el)||el.closest('#picker,#'+UI_ID+
+         ',#hans-left-control-center-v100,#ro-loot-journal-v05-ui'))continue;
+      const rect=el.getBoundingClientRect();
+      if(rect.top<0||rect.top>125||rect.left<95||rect.right>innerWidth+5)continue;
+      const t=norm(el.textContent||'');
+      if(t.length>95)continue;
+      const m=t.match(/寶箱[:：]?(?:需要|需求|費用|花費)?([0-9,]{1,9})(?:z|zeny)(?![a-z])/i);
+      if(!m)continue;
+      const value=Number(m[1].replace(/,/g,''));
+      if(Number.isFinite(value)&&value>=0)return value;
+    }
+    return null;
+  }
+  function treasureTab(){
+    const picker=document.querySelector('#picker');
+    if(!picker||!visible(picker))return null;
+    const options=[...document.querySelectorAll('button,[role="button"]')];
+    return options.find(b=>{
+      if(!visible(b)||b.closest('#'+UI_ID))return false;
+      const rect=b.getBoundingClientRect();
+      if(rect.top<0||rect.top>180)return false;
+      return /^(?:寶箱|宝箱)\d{1,5}$/i.test(norm(b.textContent||''));
+    })||null;
+  }
+  function treasureOpenButton(){
+    const entry=savedCardsEntry();
+    return entry&&Number.isFinite(entry.chests)&&entry.chests>0?entry:null;
+  }
+
   function isTreasurePicker(){
     const panel=document.querySelector('#picker');
     if(!panel||!visible(panel))return false;
@@ -417,38 +454,99 @@
     return /^(?:升級|強化技能|levelup|upgradeskill)!?$/i.test(heading)||
       !!levelUpPanel();
   }
+  function clickContinueSave(reason,kind){
+    const btn=continueSaveButton();
+    if(!btn){
+      status(reason+'｜找不到繼續保存，暫停選卡');
+      return true;
+    }
+    // 同一個對話框只按一次，等待畫面結束或切換。
+    const last=round.savePending;
+    if(last&&last.button===btn&&last.kind===kind){
+      if(timeNow()-last.at>2100)status(reason+'｜已按繼續保存但仍在此畫面，暫停重複點擊');
+      return true;
+    }
+    round.savePending={button:btn,kind,at:timeNow()};
+    move();btn.click();status(reason+'｜已按繼續保存');
+    return true;
+  }
   function maybeContinueSaving(){
     if(!round.started)return false;
-    // Lv120 是本場「停止開卡」的最高優先條件；
-    // 優先讀取 Level Up 顯示的等級，其次讀左上人物 Lv。
     const lv=levelUpPanel()?.level??topLeftLevel();
     if(Number.isFinite(lv)&&lv>=OPT.levelSkip){
       round.level120Reached=true;
       round.savedOpen.draining=false;
     }
     if(!round.level120Reached)return false;
-    const picker=document.querySelector('#picker');
-    const chooseOpen=!!picker&&visible(picker)&&(isLevelUpPicker()||isTreasurePicker());
-    const btn=chooseOpen?continueSaveButton():null;
-    if(round.savePending){
-      const prev=round.savePending;
-      if(!chooseOpen||!btn||btn!==prev.button){
-        round.savePending=null;
-      }else{
-        if(timeNow()-prev.at>2200)
-          status('Lv120已達｜已按「繼續保存」，等待畫面切換；不重複點擊');
-        return true;
-      }
+    const price=nextTreasureCost();
+    const costOK=price!==null&&price<OPT.treasureCostLimit;
+    const priceLabel=price===null?'價格未辨識':('下一箱'+price+' Z');
+    const panel=document.querySelector('#picker');
+    const activePicker=!!panel&&visible(panel);
+    if(!activePicker)round.savePending=null;
+
+    // 確認已達成本門檻後，本場不再主動打開任何寶箱。
+    if(price!==null&&price>=OPT.treasureCostLimit){
+      round.chestOpen.blocked=true;
+      if(activePicker)return clickContinueSave('寶箱達'+price+' Z，已達7000 Z停止門檻','limit');
+      return false;
     }
-    if(!chooseOpen)return false;
-    if(!btn){
-      status('Lv120已達｜等待升級/寶箱畫面出現「繼續保存」按鈕');
+    // 未確認下一箱需求金額時，不允許試抽（避免把現有金幣誤當成本）。
+    if(!costOK){
+      if(activePicker)return clickContinueSave('寶箱需求金額未確認，保留卡片與寶箱','unknown-cost');
+      status('Lv120後等待讀取寶箱需求金額；暫不開箱');
+      return false;
+    }
+    if(round.chestOpen.blocked){
+      if(activePicker)return clickContinueSave('寶箱自動開啟已暫停，保留剩餘獎勵','blocked');
+      return false;
+    }
+    if(activePicker){
+      // 只開寶箱：若 B 先開成技能頁，就切換上方「寶箱 n」分頁。
+      if(isLevelUpPicker()){
+        const tab=treasureTab(),stash=treasureOpenButton();
+        if(tab&&stash){
+          // 防重入：點分頁後至少等待一秒讓選卡畫面換頁。
+          const old=round.savePending;
+          if(old&&old.button===tab&&old.kind==='treasure-tab'){
+            if(timeNow()-old.at>2200){
+              round.chestOpen.blocked=true;
+              return clickContinueSave('無法切換至寶箱分頁，停止自動開箱','tab-failed');
+            }
+            return true;
+          }
+          round.savePending={button:tab,kind:'treasure-tab',at:timeNow()};
+          move();tab.click();status('Lv120後只抽寶箱｜切換寶箱分頁｜'+priceLabel);
+          return true;
+        }
+        // 無寶箱或沒找到分頁時，只保存升級卡，不自動選升級技能。
+        if(stash&&!tab)round.chestOpen.blocked=true;
+        return clickContinueSave(stash?'找不到寶箱分頁，停止自動開箱':'Lv120停止升級卡，保留剩餘卡片', 'level');
+      }
+      if(isTreasurePicker()){
+        round.savePending=null;
+        // 成本低於7000，三選一交由原本巫師／流氓選技腳本處理寶箱。
+        return false;
+      }
+      // 未知選卡頁面不自行選卡。
       return true;
     }
-    // 每個升級/寶箱畫面只按一次，等界面關閉或換頁才可處理下一個。
-    round.savePending={at:timeNow(),button:btn};
-    move();btn.click();
-    status('Lv120已達｜按「繼續保存」，停止繼續開卡');
+    if(round.chestOpen.blocked)return false;
+    const entry=treasureOpenButton();
+    if(!entry)return false;
+    const state=round.chestOpen,now=timeNow();
+    if(state.count!==entry.chests){
+      state.count=entry.chests;state.tries=0;state.lastAt=0;
+    }
+    if(state.lastAt&&now-state.lastAt<1600)return false;
+    if(state.tries>=2){
+      state.blocked=true;
+      status('寶箱數量未減少，開啟(B)兩次無效｜停止重試');
+      return false;
+    }
+    state.tries++;state.lastAt=now;
+    move();entry.button.click();
+    status('Lv120後自動開寶箱｜還有'+entry.chests+'箱｜'+priceLabel+'（低於7000）');
     return true;
   }
 

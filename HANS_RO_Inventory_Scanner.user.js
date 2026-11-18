@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜逐件裝備巡檢＋GS前十保護＋Discord完整紀錄
 // @namespace    https://ro.hans-webgametw.com/
-// @version      2.1.2
-// @description  逐件開啟背包詳情，完整記錄名稱/UID/位置/部位/GS/Tier/詞綴/卡片/保護狀態；可發 Discord；各部位前10保護需另行確認。
+// @version      2.1.3
+// @description  V2.1.3：獨立裝備巡檢（不與選關戰利品整合）；E 穿戴裝備不掃描、不動；逐件讀取非E裝備詳情，保護操作另行確認。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -48,7 +48,7 @@
   const pane = document.createElement('section');
   pane.id = ID;
   pane.innerHTML = `
-    <div class="hp-title"><strong>HANS｜非 E 裝備逐件巡檢 V2.1</strong><button id="hp-toggle" title="收合/展開">−</button></div>
+    <div class="hp-title"><strong>HANS｜非 E 裝備逐件巡檢 V2.1.3</strong><button id="hp-toggle" title="收合/展開">−</button></div>
     <div id="hp-body">
       <div class="hp-sub">主城按 C → 背包 → 全部；僅逐件選取「未穿戴（無 E）」的裝備讀取詳情。E 穿戴品完全跳過，絕不點選。</div>
       <div class="hp-sub">按「掃描＋傳 DC」會記錄全部非 E 裝備，E 只計入跳過件數。成功掃完才傳；每部位非 E 前10保護必須另外按確認。</div>

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 盜賊→流氓｜六核心自動選技＋優先放逐＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.2.1
-// @description  v1.2.1：人物達Lv120後不自動選升級技能；寶箱僅在下一箱需求低於7000 Z時抽取，金額未讀到或超標則停止。其他選卡規則不變。
+// @version      1.2.2
+// @description  v1.2.2：已開啟寶箱三選一必須先完成選卡，即使費用達7000 Z；選完後停止再開下一箱，保留剩餘獎勵。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
 // @run-at       document-idle
@@ -18,13 +18,13 @@
     // 顯示原因，不要靜默失敗或在同一頁偷偷建立兩個同時選卡的控制器。
     const warning=document.createElement('div');
     warning.id='hans-rogue-duplicate-warning-120';
-    warning.textContent='流氓 v1.2.1 未接管：偵測到重複／舊版流氓腳本。請到 Tampermonkey 停用其他流氓版本後重新整理。';
+    warning.textContent='流氓 v1.2.2 未接管：偵測到重複／舊版流氓腳本。請到 Tampermonkey 停用其他流氓版本後重新整理。';
     warning.style.cssText='position:fixed;top:8px;right:8px;z-index:2147483647;background:#743b25;color:white;font:12px system-ui;padding:10px;max-width:330px;border:1px solid white;border-radius:6px';
     (document.body||document.documentElement).append(warning);
     return;
   }
   const label = '流氓';
-  const version = '1.2.1';
+  const version = '1.2.2';
   const potion = [/傷害藥水|damage potion|potion of damage/i, /範圍藥水|area potion|potion of area/i];
   const normalize = s => String(s||'').normalize('NFKC').replace(/\s+/g,' ').trim();
   const read = (el,selector) => normalize(el?.querySelector(selector)?.textContent||'');
@@ -447,15 +447,12 @@
       diagnostic('Lv120已到｜不再選升級技能，改由巡走模組保存');
       return true;
     }
+    // 只在已經開啟的寶箱三選一中呼叫此函式：
+    // 已出現在螢幕的寶箱必須先選完，不能因 HUD 的下一箱成本>=7000 或金額未讀到而卡住。
+    // 開下一箱的金額門檻由長場巡走統一執行。
     const price=liveNextChestCost();
-    if(price===null){
-      diagnostic('Lv120後寶箱需求金額未辨識｜停止選卡避免超額');
-      return true;
-    }
-    if(price>=7000){
-      diagnostic('下一箱需求'+price+' Z已達7000門檻｜停止開寶箱');
-      return true;
-    }
+    if(price===null||price>=7000)
+      diagnostic('本箱已經打開｜先完成這一箱選卡；下一箱不再開啟');
     return false;
   }
 
@@ -561,7 +558,7 @@
     statusVisible(on);
     if(button){button.textContent=label+'選技：'+(on?'開':'關')+' v'+version;
       button.style.background=on?'#186442':'#384455';}
-    diagnostic(on?'已啟動 v1.2.1｜等待技能選卡或5/5判斷':'尚未啟動 v1.2.1｜按 Shift+2 或左側流氓選技按鈕啟用');
+    diagnostic(on?'已啟動 v1.2.2｜等待技能選卡或5/5判斷':'尚未啟動 v1.2.2｜按 Shift+2 或左側流氓選技按鈕啟用');
   }
   function mount(){
     if(!document.body){setTimeout(mount,100);return;}

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜左側控制中心｜巡走＋選技（模組獨立）
 // @namespace    hunghung-ro-local-tools
-// @version      1.0.0
-// @description  將左側六支已安裝的巡走、採集、選技按鈕收納成可拖曳/收合面板。原本六支腳本各自執行、各自從GitHub更新；不改遊戲流程。
+// @version      1.0.1
+// @description  v1.0.1：六個獨立模組改為一行式精簡控制面板，預設收合；修正未載入按鈕仍顯示的問題，不更動原始功能腳本。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-start
 // @grant        none
@@ -14,7 +14,8 @@
   'use strict';
   const ROOT_ID='hans-left-control-center-v100';
   const CSS_ID='hans-left-control-center-css-v100';
-  const SAVED_KEY='hans-ro-left-control-center-v100';
+  const SAVED_KEY='hans-ro-left-control-center-v101';
+  const PREVIOUS_SAVED_KEY='hans-ro-left-control-center-v100';
   const MODULES=Object.freeze([
     {id:'hans-mage-autoskill-v123',     name:'巫師選技',shortcut:'Shift+1',group:'選技',match:/巫師選技/u},
     {id:'hans-rogue-autoskill-v100',   name:'流氓選技',shortcut:'Shift+2',group:'選技',match:/流氓選技/u},
@@ -28,8 +29,11 @@
   const byId=x=>document.getElementById(x);
   const load=()=>{
     try{
-      const v=JSON.parse(localStorage.getItem(SAVED_KEY)||'null');
-      return v&&typeof v==='object'?v:{};
+      const current=JSON.parse(localStorage.getItem(SAVED_KEY)||'null');
+      if(current&&typeof current==='object')return current;
+      const old=JSON.parse(localStorage.getItem(PREVIOUS_SAVED_KEY)||'null');
+      // 沿用之前拖曳的位置，但第一次升級 v1.0.1 一律預設收合。
+      return old&&typeof old==='object'?{x:old.x,y:old.y,expanded:false}:{};
     }catch{return {};}
   };
   const stored=load();
@@ -42,27 +46,32 @@
 
   // 僅視覺隱藏舊按鈕，不刪除、不搬動它們；原始 onclick、style 與 Shift 快捷鍵完全維持。
   // 也不使用 display:none：原腳本偶爾會檢查自己的按鈕 DOM 與 CSS 狀態。
+  // 全部腳本繼續獨立執行；控制中心只顯示六個按鈕代理，原按鈕隱至畫面外。
   const css='#'+ROOT_ID+'{box-sizing:border-box;position:fixed;z-index:2147483647!important;'+
-    'font:12px/1.4 system-ui,"Microsoft JhengHei",sans-serif;color:#eef7ff;'+
+    'font:12px/1.35 system-ui,"Microsoft JhengHei",sans-serif;color:#eef7ff;'+
     'background:rgba(16,31,49,.97);border:1px solid #82b0d9;'+
-    'border-radius:10px;box-shadow:0 5px 18px #0009;pointer-events:auto;'+
-    'width:194px;min-width:170px;max-width:calc(100vw - 12px);overflow:hidden}'+
+    'border-radius:9px;box-shadow:0 5px 18px #0009;pointer-events:auto;'+
+    'width:190px;min-width:172px;max-width:calc(100vw - 12px);overflow:hidden}'+
+    '#'+ROOT_ID+' [hidden]{display:none!important}'+
     '#'+ROOT_ID+' button{font:inherit;cursor:pointer;touch-action:manipulation}'+
     '#'+ROOT_ID+' .hans-hub-bar{display:flex;align-items:center;gap:5px;'+
-    'padding:7px;background:#213c59;user-select:none;touch-action:none;cursor:move}'+
+    'padding:6px;background:#213c59;user-select:none;touch-action:none;cursor:move}'+
     '#'+ROOT_ID+' .hans-hub-fold{background:#345d85;color:white;border:1px solid #658cb0;'+
-    'border-radius:5px;padding:3px 5px;min-width:25px;min-height:26px;cursor:pointer}'+
-    '#'+ROOT_ID+' .hans-hub-content{padding:5px 7px 8px;max-height:min(420px,60vh);overflow:auto}'+
-    '#'+ROOT_ID+' .hans-hub-section{border-top:1px solid #40617c;padding-top:5px;margin-top:6px}'+
-    '#'+ROOT_ID+' .hans-hub-caption{font-size:11px;color:#aecce7;font-weight:700;margin-bottom:5px}'+
-    '#'+ROOT_ID+' .hans-hub-row{display:flex;align-items:flex-start;flex-direction:column;gap:3px;margin-bottom:7px}'+
-    '#'+ROOT_ID+' .hans-hub-name{display:flex;align-items:center;justify-content:space-between;'+
-    'width:100%;font-size:10px;color:#cde2f5}'+
-    '#'+ROOT_ID+' .hans-hub-proxy{width:100%;box-sizing:border-box;text-align:left;'+
-    'background:#384455;color:#fff;border:1px solid #849bb2;border-radius:6px;'+
-    'padding:6px;white-space:normal;overflow-wrap:anywhere;min-height:31px;'+
-    'font-size:11px!important;line-height:1.25}'+
-    '#'+ROOT_ID+' .hans-hub-footer{font-size:10px;color:#9fbedb;margin-top:4px}'+
+    'border-radius:5px;padding:2px 5px;min-width:25px;min-height:24px;cursor:pointer}'+
+    '#'+ROOT_ID+' .hans-hub-content{padding:5px 6px 6px;max-height:min(315px,55vh);overflow-y:auto;overscroll-behavior:contain}'+
+    '#'+ROOT_ID+' .hans-hub-section{border-top:1px solid #40617c;padding-top:3px;margin-top:4px}'+
+    '#'+ROOT_ID+' .hans-hub-caption{font-size:10px;color:#aecce7;font-weight:700;margin-bottom:3px}'+
+    '#'+ROOT_ID+' .hans-hub-row{display:flex;align-items:center;gap:5px;margin-bottom:3px;min-height:27px}'+
+    '#'+ROOT_ID+' .hans-hub-name{display:flex;align-items:center;gap:5px;flex:1;'+
+    'min-width:0;font-size:11px;color:#d5e7f7}'+
+    '#'+ROOT_ID+' .hans-hub-name strong{font-size:11px;font-weight:600;white-space:nowrap;'+
+    'overflow:hidden;text-overflow:ellipsis}'+
+    '#'+ROOT_ID+' .hans-hub-shortcut{font-size:9px;color:#9ebbd5;white-space:nowrap;margin-left:auto}'+
+    '#'+ROOT_ID+' .hans-hub-proxy{box-sizing:border-box;min-width:44px;max-width:51px;'+
+    'height:25px;text-align:center;white-space:nowrap;'+
+    'background:#384455;color:#fff;border:1px solid #849bb2;border-radius:5px;'+
+    'padding:3px 5px;font-size:11px!important;line-height:1.1;font-weight:700!important}'+
+    '#'+ROOT_ID+' .hans-hub-footer{font-size:9px;color:#9fbedb;margin-top:3px}'+
     MODULES.map(m=>'#'+m.id+'{'+
       'transform:translate(-400vw,-400vh)!important;pointer-events:none!important;'+
       'opacity:0!important}').join('\n');
@@ -118,15 +127,20 @@
       const raw=String(source.textContent||'').trim();
       const green=/^(?:#186442|rgb\(24,\s*100,\s*66\))$/i.test(source.style.backgroundColor||'');
       if(green)active++;
-      const line=raw||spec.name+'（等待腳本狀態）';
-      if(proxy.textContent!==line)proxy.textContent=line;
-      const bg=green?'#186442':(source.style.backgroundColor||'#384455');
+      // 主視窗只顯示開／關；原本完整巡走診斷保留在滑鼠提示，不再撐高面板。
+      const abnormal=/錯誤|失敗|安全停靠|無法/u.test(raw);
+      const brief=abnormal?'異常':green?'開':'關';
+      if(proxy.textContent!==brief)proxy.textContent=brief;
+      const bg=abnormal?'#92541f':green?'#186442':'#384455';
       if(proxy.style.backgroundColor!==bg)proxy.style.backgroundColor=bg;
-      const details=spec.name+'｜'+spec.shortcut+(source.title?'｜'+source.title:'');
+      const details=spec.name+'｜'+spec.shortcut+'｜'+(raw||'尚無狀態')+
+        (source.title?'｜'+source.title:'');
       if(proxy.title!==details)proxy.title=details;
+      const {name}=pair;
+      if(name?.title!==details)name.title=details;
       proxy.disabled=!!source.disabled;
     }
-    const brief=count+' 個模組'+(active?' · '+active+' 開':'');
+    const brief=count+'/'+MODULES.length+' · '+active+' 開';
     if(summary.textContent!==brief)summary.textContent=brief;
     if(count===0)headerText.title='尚未載入任何巡走／選技模組，請先確認它們已在 Tampermonkey 啟用';
     for(const [name,section] of groups){
@@ -162,10 +176,12 @@
         const row=document.createElement('div');row.className='hans-hub-row';
         const label=document.createElement('div');label.className='hans-hub-name';
         const name=document.createElement('strong');name.textContent=spec.name;
-        const shortcut=document.createElement('span');shortcut.textContent=spec.shortcut;
+        const shortcut=document.createElement('span');shortcut.className='hans-hub-shortcut';
+        // 不在每一行重複顯示「Shift+...」長字串，以數字精簡顯示；完整快捷鍵仍在提示文字。
+        shortcut.textContent=spec.shortcut.replace('Shift+','⇧');
         label.append(name,shortcut);
         const proxy=document.createElement('button');proxy.type='button';proxy.className='hans-hub-proxy';
-        proxy.textContent='等待腳本載入';
+        proxy.textContent='關';
         proxy.addEventListener('click',()=>{
           const source=sourceFor(spec);
           if(!source){proxy.textContent='找不到腳本按鈕';return;}
@@ -173,7 +189,7 @@
           source.click();
           setTimeout(updateView,80);
         });
-        row.append(label,proxy);section.append(row);rows.set(spec.id,{row,proxy});
+        row.append(label,proxy);section.append(row);rows.set(spec.id,{row,proxy,name});
       }
       body.append(section);
     }
@@ -182,7 +198,7 @@
     empty.textContent='尚未偵測到選技或巡走模組，請確認原始腳本已啟用。';
     body.append(empty);
     const footer=document.createElement('div');footer.className='hans-hub-footer';
-    footer.textContent='各模組獨立更新｜原快捷鍵仍可使用';
+    footer.textContent='各腳本獨立更新 · 快捷鍵保留';
     body.append(footer);
     root.append(bar,body);document.body.append(root);
     reposition(Number(stored.x),Number(stored.y));
@@ -214,7 +230,7 @@
     body.style.display=expanded?'block':'none';
     foldButton.textContent=expanded?'−':'+';
     foldButton.title=expanded?'收合選技／巡走':'展開選技／巡走';
-    if(root)root.style.width=expanded?'252px':'194px';
+    if(root)root.style.width=expanded?'232px':'190px';
     if(root)reposition(parseFloat(root.style.left),parseFloat(root.style.top));
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',mount,{once:true});

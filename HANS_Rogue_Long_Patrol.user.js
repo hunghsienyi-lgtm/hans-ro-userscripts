@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HANS RO｜流氓長場巡走＋磁鐵｜前3分鐘不停＋Lv130免翻牌
 // @namespace    hunghung-ro-local-tools
-// @version      2.3.1
+// @version      2.3.2
 // @description  流氓長場：開局前3分鐘不停留定點（1:55、2:55仍追磁鐵，追完續巡）；3:00後返點並沿用原版磁鐵排程、安全停靠、Boss最後15秒及Lv130免翻牌。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-idle
@@ -42,6 +42,7 @@
   };
   const button=document.createElement('button');
   button.id=UI_ID;button.type='button';
+  button.dataset.hansScriptVersion='2.3.2';
   button.style.cssText='position:fixed;left:8px;bottom:198px;z-index:2147483647;background:#384455;color:#fff;border:1px solid #eee;border-radius:5px;padding:5px 8px;font:12px system-ui,sans-serif;cursor:pointer;max-width:min(360px,80vw);text-align:left';
   button.title='Shift+8 流氓長場：前3分鐘持續巡走（1:55／2:55照常尋磁鐵），3:00後返點恢復原版站打、磁鐵與安全停靠；Boss最後15秒只找磁鐵、Lv130免翻牌。';
   button.setAttribute('aria-keyshortcuts','Shift+8');
@@ -478,7 +479,7 @@
     enabled=true;if(remember)try{sessionStorage.setItem(ENABLE_KEY,'1');}catch{}
     button.style.background='#186442';status('開｜等待下一場開局');
     clearInterval(interval);interval=setInterval(()=>{
-      try{loop();}catch(err){move();status('錯誤：已停止移動');console.error('[HANS 流氓巡走 2.3.1]',err);}
+      try{loop();}catch(err){move();status('錯誤：已停止移動');console.error('[HANS 流氓巡走 2.3.2]',err);}
     },OPT.tickMs);
   }
   button.onclick=()=>enabled?stop():start();

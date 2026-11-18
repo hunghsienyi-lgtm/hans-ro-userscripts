@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.9.14
-// @description  v0.9.14：修復五周目實際「改⁵」未辨識、右側預覽已正確卻無法點出發；兼容舊「改⁴」，不變更其他腳本。
+// @version      0.9.15
+// @description  v0.9.15：結算返回角色後，若出現「選擇大廳」視窗，安全辨識並自動按「離線玩」後繼續選關重進；只操作確認的選大廳視窗，不點其他選項。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.9.14';
+  const VERSION = '0.9.15';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -2189,6 +2189,41 @@
       else clearZoomPending();
     }
   }
+  // 結算返回角色後，新版遊戲可能多一層「選擇大廳」視窗。
+  // 必須確認同一對話框內同時存在標題、說明文字與「離線玩」按鈕，
+  // 不能只找到頁面上任何含離線兩字的按鈕就誤點。
+  function chooseLobbyOfflineButton(){
+    for(const button of document.querySelectorAll('button,[role="button"],input[type="button"],input[type="submit"]')){
+      if(hud.contains(button)||!shown(button)||button.disabled)continue;
+      const label=norm(button.innerText||button.textContent||button.value||
+        button.getAttribute('aria-label')||'');
+      if(!/^(?:離線玩|离线玩)$/.test(label))continue;
+      for(let root=button.parentElement,depth=0;root&&depth<9;root=root.parentElement,depth++){
+        if(root===document.body)break;
+        const text=norm(root.innerText||root.textContent||'');
+        if(text.length>2400)continue;
+        if(text.includes('選擇大廳')&&
+           (text.includes('每個大廳')||text.includes('好友和無盡之塔')||
+            text.includes('阿斯嘉特')||text.includes('米德加德'))){
+          return {button,root};
+        }
+      }
+    }
+    return null;
+  }
+  function handleLobbyOffline(dialog){
+    phase('lobby-selection');
+    // 「離線玩」通常會造成畫面切換；同一視窗避免短時間連點。
+    if(Date.now()-lastAt<1800){
+      tell('已找到選擇大廳，等待「離線玩」按鈕可操作');return;
+    }
+    if((attempts.offlineLobby||0)>=3){
+      tell('離線玩已嘗試3次仍未離開選擇大廳，停止重點以避免誤操作');
+      return;
+    }
+    action('offlineLobby',dialog.button,'選擇大廳 → 離線玩',3,1800);
+  }
+
   function tick() {
     if(!active||document.hidden)return;
     try {
@@ -2198,6 +2233,9 @@
       // 三分鐘捨棄確認優先於一般遠征重進；未完成局不可由普通選關誤點過去。
       if(handleShortRun())return;
       if(incompleteDialog()){tell('未完成的一局請手動確認或啟用3分鐘刷卡模式');return;}
+      // 必須在遠征/難度視窗判斷之前處理，避免背景尚未卸載的介面蓋過選大廳。
+      const lobby=chooseLobbyOfflineButton();
+      if(lobby){handleLobbyOffline(lobby);return;}
       if(difficultyOpen()){handleDifficulty();return;}
       if(expeditionOpen()){stageExplorerTick();handleExpedition();return;}
       const back=findControl(W.back);

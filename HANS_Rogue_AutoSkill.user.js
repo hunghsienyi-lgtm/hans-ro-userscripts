@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 盜賊→流氓｜六核心自動選技＋優先放逐＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.1.3
-// @description  流氓v1.1.3：沿用v1.1.2的核心技能保護邏輯，新增向左側控制中心回報本機實際載入版本。
+// @version      1.1.4
+// @description  流氓v1.1.4：六招齊後先放逐當前所有可放逐的非刀扇卡（包含已學核心升級卡），再選刀扇；六招未齊絕不放逐，禁招絕不學。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
 // @run-at       document-idle
@@ -15,7 +15,7 @@
   const id = 'hans-rogue-autoskill-v100';
   if (document.getElementById(id)) return;
   const label = '流氓';
-  const version = '1.1.3';
+  const version = '1.1.4';
   const potion = [/傷害藥水|damage potion|potion of damage/i, /範圍藥水|area potion|potion of area/i];
   const normalize = s => String(s||'').normalize('NFKC').replace(/\s+/g,' ').trim();
   const read = (el,selector) => normalize(el?.querySelector(selector)?.textContent||'');
@@ -272,17 +272,25 @@
     // 第二道保險：五格必須逐格確認五種主動核心，普攻第一招也必須已選過。
     // 缺任何一招（或 DOM 證據不明確），本函式不得消耗任何放逐次數。
     if(!info.ready || !info.coreSlotsVerified || !info.basicLearned)return false;
-    // 只放逐影步、背刺及其他「非核心」技能選項；永不放逐六核心卡。
+    // 六招已齊後，除了刀扇以外的任何當前卡片都可以放逐；
+    // 包含已學核心的升級卡（施毒／投石／潛擊／鐵蒺藜／普攻）。
+    // 影步、背刺仍優先放逐；刀扇永遠不可放逐。
     const ranked=cards.map(card=>{
       const skill=coreOf(card),name=cardName(card);
       const banIndex=hardBans.findIndex(b=>b.re.test(name));
-      return {card,name,skill,banIndex};
-    }).filter(x=>x.banIndex>=0 || !x.skill)
-      .sort((a,b)=>a.banIndex>=0&&b.banIndex<0?-1:
-                    a.banIndex<0&&b.banIndex>=0?1:a.banIndex-b.banIndex);
+      const knife=skill?.id==='knife'||core[0].re.test(name);
+      return {card,name,skill,banIndex,knife};
+    }).filter(x=>!x.knife)
+      .sort((a,b)=>{
+        const rank=x=>x.banIndex>=0?x.banIndex:99;
+        return rank(a)-rank(b);
+      });
     for(const x of ranked){
       const btn=banishBtn(x.card);
       if(!btn)continue;
+      // 不要在剩餘放逐顯示為 0 時反覆空點；有些按鈕沒有原生 disabled。
+      const act=actText(btn);
+      if(/放逐\s*[:：]?\s*0(?:\s*次)?(?:\b|$)|(?:banish|exile)\s*[:：]?\s*0\b/i.test(act))continue;
       const marker=normalize(btn.textContent)+'|'+normalize(btn.title)+'|'+x.name;
       const before=attempts.get(btn);
       if(before?.marker===marker&&before.count>=2)continue;
@@ -361,7 +369,8 @@
       const backup=cards.reduce((a,b)=>!a||fallbackChestRank(b)>fallbackChestRank(a)?b:a,null);
       if(backup)chooseCard(backup,'寶箱保底');return;
     }
-    // 優先順序固定：刀扇有就點；缺招先補；六招齊後才可放逐。
+    // 優先順序：六招未齊時刀扇優先並補招、不放逐；
+    // 六招已齊時「先放逐所有可放逐的非刀扇卡」，最後才選刀扇。
     const info=slotInfo(panel);
     // 例：遊戲顯示「技能 5/5」卻仍缺刀扇；這一局不可用放逐補救已佔用的技能欄。
     if(info.full && !info.coreSlotsVerified){
@@ -369,15 +378,19 @@
         '；本局暫停選技及放逐，避免誤選／浪費。');
       return;
     }
-    const {phase,choice}=chooseSkill(cards,info);
-    if(choice){chooseCard(choice.card,phase?'刀扇優先／補六招':'刀扇最高優先');return;}
-    if(!info.ready){
-      // 前期絕不動用放逐，包括影步與背刺；改用重抽。
-      if(tryReroll(panel,'六招未齊（缺 '+missingCoreText(info)+'），禁止放逐'))return;
-    }else{
-      // 後期才用放逐排除非刀扇，再用重抽尋找刀扇。
+    if(info.ready){
+      // 即使畫面已出現刀扇，也先逐張消耗能用的放逐，把其他卡片剔除。
+      // 每次成功點擊放逐都結束這輪 tick；等待遊戲更新畫面後再重新判斷。
+      // 因此不會在同一輪同時觸發「放逐」與「選刀扇」。
       if(tryBanish(cards,info))return;
-      if(tryReroll(panel,'六招已齊，尋找刀扇'))return;
+      const {choice}=chooseSkill(cards,info);
+      if(choice){chooseCard(choice.card,'六招已齊｜非刀扇放逐優先，最後選刀扇');return;}
+      if(tryReroll(panel,'六招已齊且沒有刀扇，尋找刀扇'))return;
+    }else{
+      // 未齊前絕不消耗放逐，刀扇及其他缺少的核心才有選取權。
+      const {choice}=chooseSkill(cards,info);
+      if(choice){chooseCard(choice.card,'刀扇優先／補六招');return;}
+      if(tryReroll(panel,'六招未齊（缺 '+missingCoreText(info)+'），禁止放逐'))return;
     }
     // 重抽耗盡／放逐用完後保底：絕不能選影步、背刺。
     // 六招未齊：只能選已認得的核心卡，沒有就等待人工處理，絕不填入雜技。

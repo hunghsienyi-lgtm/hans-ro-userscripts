@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜逐件裝備巡檢＋GS前十保護＋Discord完整紀錄
 // @namespace    https://ro.hans-webgametw.com/
-// @version      2.5.2
-// @description  V2.5.2：保護及商人販賣移除確認視窗；改由完整掃描及保護一致性檢查把關；為一鍵全流程準備。
+// @version      2.5.3
+// @description  V2.5.3：加入一鍵掃描、保護、驗證、商人售出、返程的完整流程核心；無確認彈窗。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -104,13 +104,13 @@
   const $ = id => pane.querySelector('#' + id);
   const status = message => { $('hp-status').textContent = message; };
   const controls = () => {
-    $('hp-scan').disabled = running;
-    $('hp-scan-dc').disabled = running;
+    $('hp-scan').disabled = running||autoRunning;
+    $('hp-scan-dc').disabled = running||autoRunning;
     $('hp-send').disabled = running || !scanSnapshot?.complete;
     $('hp-json').disabled = !records.length;
     $('hp-save-hook').disabled = running;
-    $('hp-apply').disabled = running || issues.length > 0 || !scannedAt || !scanSnapshot?.complete || !plan.length;
-    $('hp-stop').disabled = !running;
+    $('hp-apply').disabled = running||autoRunning||issues.length>0||!scannedAt||!scanSnapshot?.complete||!plan.length;
+    $('hp-stop').disabled = !running&&!autoRunning;
     $('hp-export').disabled = !records.length;
   };
   // 面板可拖曳：按住藍色標題列即可搬移。位置與縮小狀態只存本機。
@@ -178,7 +178,7 @@
     placePanel(rect.left,rect.top);
     rememberPosition();
   });
-  $('hp-stop').onclick = () => { aborted = true; status('已請求停止；處理完目前這件就中止。'); };
+  $('hp-stop').onclick = () => { aborted=true;autoAbort=true;document.dispatchEvent(new Event('hans-merchant-stop'));status('已請求停止。'); };
   $('hp-save-hook').onclick = () => {
     const hook=$('hp-hook').value.trim();
     if (!validHook(hook)) { status('Webhook 格式不正確，必須是 discord.com/api/webhooks/...'); return; }
@@ -886,6 +886,67 @@
     refresh();
   }
 
+  // 一鍵執行：若任何階段資料不完整，後續販賣立即中斷。
+  async function keyC(){
+    const opt={key:'c',code:'KeyC',bubbles:true,cancelable:true};
+    document.dispatchEvent(new KeyboardEvent('keydown',opt));
+    await pause(180);
+    document.dispatchEvent(new KeyboardEvent('keyup',opt));
+    await pause(350);
+  }
+  async function openBag(){
+    try{validateInventory();return;}catch{}
+    if(!inv()||!isVisible(inv()))await keyC();
+    let opts=[...document.querySelectorAll('button,[role="tab"]')].filter(isVisible);
+    const bag=opts.find(el=>norm(textOf(el))==='背包');
+    if(bag){bag.click();await pause(300);}
+    opts=[...document.querySelectorAll('button')].filter(isVisible);
+    const all=opts.find(el=>/^全部\s*\d+$/u.test(norm(textOf(el))));
+    if(all){all.click();await pause(300);}
+    validateInventory();
+  }
+  async function closeBag(){
+    if(!inv()||!isVisible(inv()))return;
+    await keyC();
+    for(let n=0;n<10;n++){
+      if(!inv()||!isVisible(inv()))return;
+      await pause(130);
+    }
+    throw Error('背包未能關閉，已停止商人移動。');
+  }
+  const checkAutoStop=()=>{if(autoAbort||aborted)throw Error('使用者已停止');};
+  async function runOneTouch(){
+    if(autoRunning||running)return;
+    autoRunning=true;autoAbort=false;aborted=false;controls();
+    try {
+      status('① 開背包並掃描非 E 裝備...');
+      await openBag();checkAutoStop();
+      await scan(false);
+      if(!scanSnapshot?.complete||issues.length)throw Error('首次掃描不完整，已停止。');
+      checkAutoStop();
+      status('② 正在自動保護傳說前十...');
+      const didApply=await apply();
+      if(!didApply)throw Error('保護執行失敗，禁止販賣。');
+      checkAutoStop();
+      status('③ 第二次掃描，逐件確認保護結果...');
+      await scan(false);
+      if(!scanSnapshot?.complete||issues.length||scanSnapshot.version!==POLICY_VERSION||
+        scanSnapshot.items.length!==scanSnapshot.eligibleCount)throw Error('複掃驗證失敗，禁止販賣。');
+      if(plan.some(x=>x.action!=='保持'))throw Error('仍有保護狀態不符的裝備，禁止販賣。');
+      checkAutoStop();
+      const verified=JSON.parse(JSON.stringify(scanSnapshot));
+      status('④ 關閉背包，前往礦石商人並販賣、返回...');
+      await closeBag();checkAutoStop();
+      const result=await runMerchant('full',true);
+      if(!result?.done)throw Error('商人販賣或回程未完成。');
+      if(validHook(savedHook()))await sendDiscord({...verified,cycleResult:result});
+      status(result.sale?.empty?'✅ 完成：已保護並驗證；商人無可售裝備，已送出返程。':
+        '✅ 完成：已保護並驗證；已按全部賣掉，已送出返程。');
+    }catch(e){
+      status('⛔ 一鍵流程停止：'+String(e?.message||e));
+      console.warn('[HANS 一鍵流程]',e);
+    }finally{autoRunning=false;controls();}
+  }
   initMerchantRoute();
   controls();
 })();

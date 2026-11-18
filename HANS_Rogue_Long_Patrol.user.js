@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜流氓長場巡走＋磁鐵｜前3分鐘不停＋Lv120後寶箱自動繼續保存
 // @namespace    hunghung-ro-local-tools
-// @version      2.3.9
-// @description  v2.3.9：Lv120後只抽已保存寶箱；下一箱需求達7000 Z即停止。改從「寶箱 N」分頁直接切換，避免底部(B)被遮住。
+// @version      2.4.0
+// @description  v2.4.0：開場卡片>5開第一批、再累積>=20開第二批；之後每次確認吃到磁鐵再開卡，直到Lv120或卡片0張；Lv120後只開寶箱到需求7000 Z。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        none
@@ -42,7 +42,7 @@
   };
   const button=document.createElement('button');
   button.id=UI_ID;button.type='button';
-  button.dataset.hansScriptVersion='2.3.9';
+  button.dataset.hansScriptVersion='2.4.0';
   button.style.cssText='position:fixed;left:8px;bottom:198px;z-index:2147483647;background:#384455;color:#fff;border:1px solid #eee;border-radius:5px;padding:5px 8px;font:12px system-ui,sans-serif;cursor:pointer;max-width:min(360px,80vw);text-align:left';
   button.title='Shift+8 流氓長場：前3分鐘持續巡走（1:55／2:55照常尋磁鐵），3:00後返點恢復原版站打、磁鐵與安全停靠；Boss最後15秒只找磁鐵、Lv120後寶箱自動繼續保存。';
   button.setAttribute('aria-keyshortcuts','Shift+8');
@@ -59,7 +59,7 @@
     patrolStep:0,patrolUntil:0,target:null,bestGap:Infinity,progressAt:0,
     detours:0,detourKey:'',detourUntil:0,seekAt:0,returnAt:0,returnBest:Infinity,
     returnProgressAt:0,returnDetours:0,returnDetourUntil:0,returnDetourKey:'',
-    magnetObserved:null,blocked:[],level120Reached:false,savePending:null,chestOpen:{count:null,tries:0,lastAt:0,blocked:false},savedOpen:{count:null,tries:0,lastAt:0,blocked:false,draining:false},failed:false,
+    magnetObserved:null,blocked:[],level120Reached:false,savePending:null,chestOpen:{count:null,tries:0,lastAt:0,blocked:false},savedOpen:{count:null,tries:0,lastAt:0,blocked:false,draining:false,phase:0,magnetReady:false,magnetCount:0},failed:false,
     homeFallbacks:0,usingFallbackHome:false,finalPicked:0
   };
   function move(keys=''){
@@ -137,7 +137,7 @@
       bestGap:Infinity,progressAt:0,detours:0,detourKey:'',detourUntil:0,
       seekAt:0,returnAt:0,returnBest:Infinity,returnProgressAt:0,
       returnDetours:0,returnDetourUntil:0,returnDetourKey:'',magnetObserved:null,
-      blocked:[],level120Reached:false,savePending:null,chestOpen:{count:null,tries:0,lastAt:0,blocked:false},savedOpen:{count:null,tries:0,lastAt:0,blocked:false,draining:false},failed:false,
+      blocked:[],level120Reached:false,savePending:null,chestOpen:{count:null,tries:0,lastAt:0,blocked:false},savedOpen:{count:null,tries:0,lastAt:0,blocked:false,draining:false,phase:0,magnetReady:false,magnetCount:0},failed:false,
       homeFallbacks:0,usingFallbackHome:false,finalPicked:0
     });
   }
@@ -246,6 +246,15 @@
       !round.blocked.some(x=>near(x.pos,p,3)));
     return available.reduce((best,p)=>!best||dist(p,player)<dist(best,player)?p:best,null);
   }
+  function markMagnetForCards(){
+    // 磁鐵必須是「接近後在小地圖穩定消失」才觸發，非時間到就直接開卡。
+    // 首批/第二批由張數觸發；第二批完成後才將磁鐵當作新開卡訊號。
+    const state=round.savedOpen;
+    if(!state||state.phase<2||round.level120Reached)return;
+    state.magnetReady=true;
+    state.magnetCount++;
+    status('已確認拾取磁鐵｜準備開啟已保存卡片（第'+state.magnetCount+'次）');
+  }
   function seekMagnet(now){
     const finalOnly=round.mode==='final';
     if(!finalOnly&&now-round.seekAt>=OPT.magnetSearchMaxMs){returnHome(round.part,now);return;}
@@ -258,6 +267,7 @@
       else if(now-w.missingAt<OPT.pickupConfirmMs){move();return;}
       else if(now-w.missingAt>=OPT.pickupConfirmMs){
         if(w.minGap<=OPT.magnetReach && player&&dist(player,w.pos)<=OPT.magnetReach+1){
+          markMagnetForCards();
           if(finalOnly){
             // 倒數最後15秒不要花時間返點；繼續等下一顆磁鐵。
             round.finalPicked++;
@@ -351,44 +361,58 @@
   function maybeOpenSavedCards(seconds){
     if(!round.started||!Number.isFinite(seconds)||seconds<0)return false;
     const state=round.savedOpen;
-    // 人物等級達 Lv120 優先於「整批開到0張」，剩餘卡片直接保留。
-    if(round.level120Reached || (Number.isFinite(topLeftLevel())&&topLeftLevel()>=OPT.levelSkip)){
-      round.level120Reached=true;
-      state.draining=false;
+    const lv=topLeftLevel();
+    // Lv120 停升級卡為最高優先；剩下的卡片保留，改由寶箱價格規則處理。
+    if(round.level120Reached||(Number.isFinite(lv)&&lv>=OPT.levelSkip)){
+      round.level120Reached=true;state.draining=false;state.magnetReady=false;
       return false;
     }
     if(state.blocked)return false;
     const picker=document.querySelector('#picker');
-    if(picker&&visible(picker))return false; // 當前卡片交給獨立選技腳本
+    if(picker&&visible(picker))return false;
     const entry=savedCardsEntry();
     if(!entry)return false;
-    // 已保存卡片「超過5張」只決定何時啟動整批；不是只開到剩5張。
-    // 前75秒觸發後，超過75秒也會繼續處理，直到確認卡片0張。
-    if(!state.draining){
-      if(seconds>75||entry.count<=5)return false;
-      state.draining=true;
-      status('卡片'+entry.count+'張 > 5｜啟動整批開啟，直到0張');
-    }
-    if(entry.count===0){
+
+    if(state.draining&&entry.count===0){
       state.draining=false;state.count=0;state.tries=0;state.lastAt=0;
-      status('已保存卡片0張｜整批全部開完');
+      if(state.phase<2)state.phase++;
+      status('已保存卡片0張｜本批完成｜階段'+state.phase);
       return false;
     }
+    if(!state.draining){
+      let trigger='';
+      if(state.phase===0 && seconds<=75 && entry.count>5){
+        trigger='第一批：卡片超過5張';
+      }else if(state.phase===0 && seconds>75 && entry.count>=20){
+        // 更新後中途接手，已錯過第一批時可直接開>=20張的大批次。
+        state.phase=1;trigger='中途接手第二批：卡片達20張';
+      }else if(state.phase===1 && entry.count>=20){
+        trigger='第二批：卡片達20張';
+      }else if(state.phase>=2 && state.magnetReady && entry.count>0){
+        // Boss倒數最後15秒優先撿磁鐵，待畫面恢復後才開卡。
+        if(isFinalBossSweep())return false;
+        trigger='確認吃到磁鐵：開啟累積卡片';
+        state.magnetReady=false;
+      }
+      if(!trigger)return false;
+      state.draining=true;state.count=null;state.tries=0;state.lastAt=0;
+      status(trigger+'｜開始連續開卡直到卡片0或Lv120');
+    }
+    // 已開始的一批不可因張數降到5或遊戲時間經過而中斷。
     const now=timeNow();
     if(state.count!==entry.count){
-      // 卡片數實際變化後，才解鎖下一張。剩5、4、3、2、1張也要開。
       state.count=entry.count;state.tries=0;state.lastAt=0;
     }
     if(state.lastAt&&now-state.lastAt<1500)return false;
     if(state.tries>=2){
-      state.blocked=true;
-      status('卡片'+entry.count+'張未減少｜停止重試，避免重複點擊');
+      state.blocked=true;state.draining=false;
+      status('卡片'+entry.count+'張沒有減少｜暫停自動開卡避免重複誤點');
       return false;
     }
     if(busy())return false;
     state.tries++;state.lastAt=now;
     move();entry.button.click();
-    status('整批開卡｜尚有'+entry.count+'張｜開啟(B)第'+state.tries+'次');
+    status('自動開卡階段'+state.phase+'｜尚有'+entry.count+'張｜開啟(B)第'+state.tries+'次');
     return true;
   }
 
@@ -647,8 +671,8 @@
       // 現在不要求前45秒啟動，5:57開啟也能從6:00磁鐵接續。
       startRound(secs);
     }
-    // 進場已保存卡片>5即啟動；在Lv120之前逐張處理，
-    // 若尚未達Lv120就持續到0張，達Lv120立即保存剩餘卡片。
+    // 第一批>5張、第二批>=20張，之後在確認吃到磁鐵後再開；
+    // 每批都開至0張或達Lv120才停止，Lv120之後只依價格規則抽寶箱。
     if(maybeOpenSavedCards(secs)){move();return;}
     // Boss 結束時 HUD 也可能跳回 0:15，不能把它誤認為下一場開局。
     // 正常重進經過主城／選關時會由 outsideRun 重設，這裡不憑時間跳轉重新開場。

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 盜賊→流氓｜六核心自動選技＋優先放逐＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.2.0
-// @description  流氓v1.2：刀扇有就點、技能未5/5不放逐；強化選卡標題與每張卡的放逐按鈕辨識，顯示操作原因。
+// @version      1.2.1
+// @description  v1.2.1：人物達Lv120後不自動選升級技能；寶箱僅在下一箱需求低於7000 Z時抽取，金額未讀到或超標則停止。其他選卡規則不變。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
 // @run-at       document-idle
@@ -18,13 +18,13 @@
     // 顯示原因，不要靜默失敗或在同一頁偷偷建立兩個同時選卡的控制器。
     const warning=document.createElement('div');
     warning.id='hans-rogue-duplicate-warning-120';
-    warning.textContent='流氓 v1.2.0 未接管：偵測到重複／舊版流氓腳本。請到 Tampermonkey 停用其他流氓版本後重新整理。';
+    warning.textContent='流氓 v1.2.1 未接管：偵測到重複／舊版流氓腳本。請到 Tampermonkey 停用其他流氓版本後重新整理。';
     warning.style.cssText='position:fixed;top:8px;right:8px;z-index:2147483647;background:#743b25;color:white;font:12px system-ui;padding:10px;max-width:330px;border:1px solid white;border-radius:6px';
     (document.body||document.documentElement).append(warning);
     return;
   }
   const label = '流氓';
-  const version = '1.2.0';
+  const version = '1.2.1';
   const potion = [/傷害藥水|damage potion|potion of damage/i, /範圍藥水|area potion|potion of area/i];
   const normalize = s => String(s||'').normalize('NFKC').replace(/\s+/g,' ').trim();
   const read = (el,selector) => normalize(el?.querySelector(selector)?.textContent||'');
@@ -410,6 +410,55 @@
     diagnostic('自動選擇：'+cardName(card)+'｜'+reason);
     card.click();
   }
+  // Lv120 後不再選技能；寶箱只在 HUD 的下一箱需求金額 <7000 Z 時允許抽。
+  // 「目前持有 Zeny」不等於「下一箱的需求 Zeny」。
+  let rewardLevel120=false;
+  function liveCharacterLevel(panel){
+    for(const el of document.querySelectorAll('span,b,strong,small,div')){
+      if(el.childElementCount>1||!shown(el)||el.closest('#hans-left-control-center-v100'))continue;
+      const r=el.getBoundingClientRect();
+      if(r.left<0||r.left>380||r.top<0||r.top>145)continue;
+      const m=String(el.textContent||'').normalize('NFKC').trim().match(/^Lv\.?\s*(\d{1,3})$/i);
+      if(m)return Number(m[1]);
+    }
+    const txt=String(panel?.textContent||'').normalize('NFKC').slice(0,350);
+    const m=txt.match(/(?:^|[\s▲△])Lv\.?\s*(\d{1,3})\s*[:：]/i);
+    return m?Number(m[1]):null;
+  }
+  function liveNextChestCost(){
+    for(const el of document.querySelectorAll('span,small,b,strong,div')){
+      if(el.childElementCount>3||!shown(el)||el.closest('#picker,#hans-left-control-center-v100,#ro-loot-journal-v05-ui'))continue;
+      const r=el.getBoundingClientRect();
+      if(r.top<0||r.top>125||r.left<95||r.right>innerWidth+5)continue;
+      const t=String(el.textContent||'').normalize('NFKC').replace(/\s+/g,'');
+      if(t.length>95)continue;
+      const m=t.match(/寶箱[:：]?(?:需要|需求|費用|花費)?([0-9,]{1,9})(?:z|zeny)(?![a-z])/i);
+      if(!m)continue;
+      const val=Number(m[1].replace(/,/g,''));
+      if(Number.isFinite(val)&&val>=0)return val;
+    }
+    return null;
+  }
+  function stopSelectionAtThreshold(panel,chest){
+    const lv=liveCharacterLevel(panel);
+    if(lv!==null)rewardLevel120=lv>=120;
+    if(!rewardLevel120)return false;
+    if(!chest){
+      diagnostic('Lv120已到｜不再選升級技能，改由巡走模組保存');
+      return true;
+    }
+    const price=liveNextChestCost();
+    if(price===null){
+      diagnostic('Lv120後寶箱需求金額未辨識｜停止選卡避免超額');
+      return true;
+    }
+    if(price>=7000){
+      diagnostic('下一箱需求'+price+' Z已達7000門檻｜停止開寶箱');
+      return true;
+    }
+    return false;
+  }
+
   function tick(){
     const reveal=document.querySelector('#drop-reveal:not(.hidden)');
     if(shown(reveal)){
@@ -431,6 +480,8 @@
     const title=normalize(read(panel,'#pk-title')||document.querySelector('#pk-title')?.textContent||read(panel,'.pk-title')||read(panel,'h1'));
     const chest=/^(?:寶箱|寶箱選擇|treasure\s*chest)\s*!?$/i.test(title);
     const level=/^(?:升\s*級|強化\s*技能|level\s*up|upgrade\s*(?:a\s*)?skill)\s*!?$/i.test(title);
+    // Lv120後優先套用技能停止／寶箱成本上限。
+    if(stopSelectionAtThreshold(panel,chest))return;
     // 標題可能是「技能選擇」而非升級；同時核對選卡與技能欄。
     const hasSkills=!!(panel.querySelector('#lu-sockets')||document.querySelector('#lu-sockets'));
     const hasFiveLabel=/(?:技能|skills?)\s*\d+\s*\/\s*\d+/i.test(normalize(panel.textContent||''));
@@ -510,7 +561,7 @@
     statusVisible(on);
     if(button){button.textContent=label+'選技：'+(on?'開':'關')+' v'+version;
       button.style.background=on?'#186442':'#384455';}
-    diagnostic(on?'已啟動 v1.2.0｜等待技能選卡或5/5判斷':'尚未啟動 v1.2.0｜按 Shift+2 或左側流氓選技按鈕啟用');
+    diagnostic(on?'已啟動 v1.2.1｜等待技能選卡或5/5判斷':'尚未啟動 v1.2.1｜按 Shift+2 或左側流氓選技按鈕啟用');
   }
   function mount(){
     if(!document.body){setTimeout(mount,100);return;}

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 二轉巫師｜五核心自動選技＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.27
-// @description  v1.27：巫師寶箱新策略：先取得1種尋寶率、再優先補滿道具5/5；滿格後放逐2種非尋寶率道具，後續優先尋寶率強化；保留7000Z最後一箱選取與升級五核心。
+// @version      1.28
+// @description  v1.28：選技能及寶箱加速版，選卡輪詢400→200ms、縮短點擊及重抽間隔；保留選卡確認、防連點、禁招及Lv120/7000Z規則。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
 // @run-at       document-idle
@@ -411,7 +411,7 @@
     if(!btn)return false;
     const t=btn.textContent.normalize('NFKC'),old=attempts.get(btn);
     attempts.set(btn,{text:t,count:old?.text===t?old.count+1:1});
-    nextRerollAt=performance.now()+1500;
+    nextRerollAt=performance.now()+900;
     diagnostic(reason+'｜重抽 '+t.trim());btn.click();return true;
   }
 
@@ -421,7 +421,7 @@
     if (message===lastDiagnostic) return;
     lastDiagnostic=message;
     if (button) button.title='Shift+1 切換；目前：'+message;
-    console.info('[HANS 巫師 v1.27]',message);
+    console.info('[HANS 巫師 v1.28]',message);
   }
   let nextRerollAt=0, pending=null, lastChoiceAt=0, lastChoiceKey='',choiceTries=0;
   const attempts=new WeakMap();
@@ -440,7 +440,7 @@
   }
   function chooseCard(card,why) {
     const id=[cardName(card),read(card,'.pk-lines'),isNew(card)].join('|');
-    if(id===lastChoiceKey && performance.now()-lastChoiceAt<900) return;
+    if(id===lastChoiceKey && performance.now()-lastChoiceAt<600) return;
     if(id===lastChoiceKey) choiceTries++;
     else {lastChoiceKey=id;choiceTries=1;}
     if(choiceTries>3){diagnostic('選卡沒有反應，停止重複點擊：'+cardName(card));return;}
@@ -601,7 +601,7 @@
     if(deck){
       const t=deck.textContent.normalize('NFKC'),old=attempts.get(deck);
       attempts.set(deck,{text:t,count:old?.text===t?old.count+1:1});
-      nextRerollAt=performance.now()+1500;
+      nextRerollAt=performance.now()+900;
       diagnostic((collecting?'五核心未齊，尋找缺少的新技能：':'沒有合格核心卡：')+'重抽整組 '+t.trim());deck.click();return;
     }
     // B 方案：耗盡重抽後優先已學技能強化，才選非核心新技能；永不僵住。
@@ -618,12 +618,12 @@
   }
   const safeTick=()=>{try{tick();}catch(error){
     diagnostic('腳本錯誤：'+String(error?.message||error));
-    console.error('[HANS 巫師 v1.27]',error);
+    console.error('[HANS 巫師 v1.28]',error);
   }};
   function enable(on){
     clearInterval(timer);
-    timer=on?setInterval(safeTick,400):null;
-    button.textContent=label+'選技：'+(on?'開':'關')+' v1.27';
+    timer=on?setInterval(safeTick,200):null;
+    button.textContent=label+'選技：'+(on?'開':'關')+' v1.28';
     button.style.background=on?'#186442':'#384455';
     diagnostic(on?'已開啟，等待選卡畫面':'已關閉；按鈕或 Shift+1 開啟');
   }
@@ -632,7 +632,7 @@
     if(document.getElementById('hans-mage-autoskill-v123'))return;
     button=document.createElement('button');button.type='button';
     button.id='hans-mage-autoskill-v123';
-    button.dataset.hansScriptVersion='1.27';
+    button.dataset.hansScriptVersion='1.28';
     button.style.cssText='position:fixed;left:8px;bottom:84px;z-index:2147483647;color:white;border:1px solid white;border-radius:5px;padding:5px 8px;cursor:pointer';
     button.onclick=()=>{
       const on=timer===null;

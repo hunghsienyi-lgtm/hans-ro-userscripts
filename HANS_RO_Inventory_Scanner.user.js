@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜逐件裝備巡檢＋GS前十保護＋Discord完整紀錄
 // @namespace    https://ro.hans-webgametw.com/
-// @version      2.6.0
-// @description  V2.6.0：一鍵全流程：開背包掃描→傳說前十自動保護→二次掃描驗證→商人自動販賣五品質→返程及DC簡報；免確認。
+// @version      2.6.1
+// @description  V2.6.1：複掃驗證後先按「回到普隆德拉」並核對回城，才下9右13去商人；保留免確認自動販賣及返程。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -69,16 +69,16 @@
   const pane = document.createElement('section');
   pane.id = ID;
   pane.innerHTML = `
-    <div class="hp-title"><strong title="按住這個藍色標題列就能拖曳">HANS｜一鍵清背包 V2.6.0</strong><button id="hp-toggle" title="縮小／展開">−</button></div>
+    <div class="hp-title"><strong title="按住這個藍色標題列就能拖曳">HANS｜一鍵清背包 V2.6.1</strong><button id="hp-toggle" title="縮小／展開">−</button></div>
     <div id="hp-body">
       <div class="hp-sub">主城按 C → 背包 → 全部；E 穿戴完全跳過。只保留傳說品質：法杖、頭上中下、披肩、飾品、鞋子、盾牌、衣服（鎧甲）。</div>
-      <div class="hp-sub">一鍵流程：非 E 掃描→自動保護傳說前十→複掃驗證→商人五品質自動販賣→返程與DC摘要；不再跳確認，異常即停。</div>
+      <div class="hp-sub">一鍵流程：非 E 掃描→自動保護傳說前十→複掃驗證→按「回到普隆德拉」→商人五品質販賣→返程與DC摘要；免確認，異常停止。</div>
       <div class="hp-bar"><button id="hp-full-cycle" style="background:#1b775a;color:white;font-weight:700;font-size:13px">▶ 一鍵全部｜掃描・保護・販賣・返程</button></div>
       <div class="hp-sub">從主城固定原點啟動；不詢問保護／販賣同意。出現異常會停止後續操作。</div>
       <div class="hp-bar"><button id="hp-scan">單獨掃描非 E</button><button id="hp-scan-dc">掃描＋傳 DC</button></div>
       <div class="hp-bar"><button id="hp-apply" disabled>單獨執行保護</button><button id="hp-stop" disabled>停止</button></div>
       <div class="hp-sub" style="margin-top:9px;border-top:1px solid #cbd5e1;padding-top:7px"><b>商人路線＋一鍵販賣（可獨立執行）</b></div>
-      <div class="hp-sub">固定路線 ↓9 →13／返回 ←13 ↑9，單次固定200ms；商人販賣與保護已免確認，但需先完成掃描、保護驗證。</div>
+      <div class="hp-sub">先在角色背包畫面按「回到普隆德拉」才能移動。回城後 ↓9 →13／返程 ←13 ↑9，單次固定200ms；保護驗證失敗不會販賣。</div>
       <div class="hp-bar"><button id="hp-route-go">↓9 →13｜去商人</button><button id="hp-route-talk">💬 只開商人對話</button></div>
       <div class="hp-bar"><button id="hp-route-return">←13 ↑9｜返回原點</button><button id="hp-route-stop">停止</button></div>
       <div class="hp-bar"><button id="hp-route-run">▶ 去商人＋賣光＋返程</button><button id="hp-route-sell">商人已開：販賣</button></div>
@@ -908,14 +908,40 @@
     if(all){all.click();await pause(300);}
     validateInventory();
   }
-  async function closeBag(){
-    if(!inv()||!isVisible(inv()))return;
-    await keyC();
-    for(let n=0;n<10;n++){
-      if(!inv()||!isVisible(inv()))return;
-      await pause(130);
+  // 背包屬於角色畫面；必須點「回到普隆德拉」才會回到可行走的城鎮。
+  // 只操作明確唯一的回城按鈕，不使用 C 來猜測視窗是否關閉。
+  function findPronteraReturn(){
+    const candidates=[...document.querySelectorAll('button,[role="button"],input[type="button"]')]
+      .filter(el=>!pane.contains(el)&&isVisible(el)&&
+        norm(el.value||textOf(el)).replace(/\\s+/g,'')==='回到普隆德拉'&&!el.disabled);
+    if(candidates.length>1)throw Error('找到多個「回到普隆德拉」按鈕，已停止，避免誤點。');
+    return candidates[0]||null;
+  }
+  function townSceneVisible(){
+    // 城鎮中的 NPC 名牌是可以核對的畫面訊號，避免單憑按鍵完成就認定回城。
+    const labels=new Set(['遠征隊長','礦石商人','裝備商人','坐騎管理員','卡片回收員','寵物飼育員']);
+    return [...document.querySelectorAll('span,div,b,strong,small,button')]
+      .some(el=>el.childElementCount<=1&&!pane.contains(el)&&isVisible(el)&&labels.has(norm(textOf(el))));
+  }
+  async function returnToProntera(){
+    checkAutoStop();
+    const button=findPronteraReturn();
+    if(!button)throw Error('掃描結束，但找不到「回到普隆德拉」按鈕；為避免走位錯誤，已停止。');
+    status('④ 點擊「回到普隆德拉」，等待城鎮場景載入...');
+    button.click();
+    const timeout=Date.now()+12000;
+    while(Date.now()<timeout){
+      checkAutoStop();
+      await pause(250);
+      const noBag=!inv()||!isVisible(inv());
+      const noReturn=!findPronteraReturn();
+      if(noBag&&noReturn&&townSceneVisible()){
+        await pause(500);
+        checkAutoStop();
+        return;
+      }
     }
-    throw Error('背包未能關閉，已停止商人移動。');
+    throw Error('已點「回到普隆德拉」，但未確認已回到可移動的主城。已停止販賣與走位，請檢查畫面。');
   }
   const checkAutoStop=()=>{if(autoAbort||aborted)throw Error('使用者已停止');};
   async function runOneTouch(){
@@ -938,8 +964,9 @@
       if(plan.some(x=>x.action!=='保持'))throw Error('仍有保護狀態不符的裝備，禁止販賣。');
       checkAutoStop();
       const verified=JSON.parse(JSON.stringify(scanSnapshot));
-      status('④ 關閉背包，前往礦石商人並販賣、返回...');
-      await closeBag();checkAutoStop();
+      status('④ 回到普隆德拉，確定切換主城畫面後再去商人...');
+      await returnToProntera();checkAutoStop();
+      status('⑤ 主城已確認，正在前往礦石商人、販賣並返回...');
       const result=await runMerchant('full',true);
       if(!result?.done)throw Error('商人販賣或回程未完成。');
       if(validHook(savedHook()))await sendDiscord({...verified,cycleResult:result});

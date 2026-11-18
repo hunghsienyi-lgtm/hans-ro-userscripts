@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.9.18
-// @description  v0.9.18：每場按離線玩後先自動清背包、保護傳說前十、商人販賣及返程，完成後才重新選關進場。
+// @version      0.9.19
+// @description  v0.9.19：每場離線玩後全自動清背包再重進；停止重進時同步中止巡檢與商人，並防止舊版賣裝模擬干擾。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -28,7 +28,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.9.18';
+  const VERSION = '0.9.19';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -1169,6 +1169,11 @@
     try{localStorage.setItem(INV_CLEAN_KEY,invCleanEnabled?'1':'0')}catch{}
     if(!invCleanEnabled&&invJob?.status==='armed'){invJob=null;saveInvJob();}
     updateInvToggle();
+    if(invCleanEnabled&&sellDryEnabled){
+      sellDryEnabled=false;sellDryPending=false;saveSellDryPending();
+      try{localStorage.setItem(SELL_DRY_ENABLED_KEY,'0')}catch{}
+      updateSellDryControls();
+    }
   });
   function handleInvCleanGate(){
     if(Date.now()<invCooldown)return true;
@@ -1337,6 +1342,10 @@
     else if(!sellLastReport)sellNote('每場結束觸發；僅讀取已開啟的商人頁');
   }
   sellToggle.addEventListener('click',()=>{
+    if(invCleanEnabled){
+      sellDryEnabled=false;sellDryPending=false;saveSellDryPending();
+      updateSellDryControls();tell('已開啟每場自動清背包，不需要舊版只讀賣裝模擬');return;
+    }
     sellDryEnabled=!sellDryEnabled;
     try{localStorage.setItem(SELL_DRY_ENABLED_KEY,sellDryEnabled?'1':'0')}catch{}
     if(!sellDryEnabled){sellDryPending=false;saveSellDryPending();}
@@ -1938,7 +1947,10 @@
     if(remember)try{sessionStorage.setItem(REENTRY_KEY,value?'1':'0');}catch{}
     if(!active){
       resetShortExit();
-      if(invJob?.status==='running')document.dispatchEvent(new Event('hans-merchant-stop'));
+      if(invJob?.status==='running'){
+        document.dispatchEvent(new Event('hans-ro-stage-inventory-stop'));
+        document.dispatchEvent(new Event('hans-merchant-stop'));
+      }
       invJob=null;saveInvJob();
     }
     btn.textContent=`重進：${active?'開':'關'}（Shift+5）`;
@@ -3520,6 +3532,10 @@
     }
   }
   $('hp-full-cycle').onclick=()=>runOneTouch(null);
+  document.addEventListener('hans-ro-stage-inventory-stop',()=>{
+    aborted=true;autoAbort=true;
+    document.dispatchEvent(new Event('hans-merchant-stop'));
+  });
   document.addEventListener('hans-ro-stage-inventory-request',evt=>{
     const id=evt.detail?.id;
     if(typeof id==='string'&&/^round-[0-9]+-[a-z0-9]+$/.test(id))runOneTouch(id);

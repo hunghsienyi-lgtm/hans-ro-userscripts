@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 盜賊→流氓｜六核心自動選技＋優先放逐＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.1.1
-// @description  流氓v1.1.1：刀扇有就點；六招未齊只補技／重抽且嚴禁放逐；六招齊後才放逐非刀扇。加強普攻取得追蹤及跨場次重置；寶箱維持尋寶率優先。
+// @version      1.1.2
+// @description  流氓v1.1.2：修正缺核心時誤選非核心填滿5格；未證實五個主動核心+普攻前絕不放逐；滿格缺招停止而不浪費資源。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
 // @run-at       document-idle
@@ -15,7 +15,7 @@
   const id = 'hans-rogue-autoskill-v100';
   if (document.getElementById(id)) return;
   const label = '流氓';
-  const version = '1.1.1';
+  const version = '1.1.2';
   const potion = [/傷害藥水|damage potion|potion of damage/i, /範圍藥水|area potion|potion of area/i];
   const normalize = s => String(s||'').normalize('NFKC').replace(/\s+/g,' ').trim();
   const read = (el,selector) => normalize(el?.querySelector(selector)?.textContent||'');
@@ -77,21 +77,36 @@
     const m=txt.match(/(?:技能|skills?)?\s*(\d+)\s*\/\s*(\d+)/i);
     const slots=[...(sockets?.querySelectorAll('.skill-slot')||[])];
     const empty=!!sockets?.querySelector('.skill-slot.empty,.skill-slot[data-skill=""],.skill-slot:not([data-skill])');
-    const full=m?Number(m[1])>=Number(m[2]):slots.length>0&&!empty;
+    const full=m?Number(m[1])>=Number(m[2]):slots.length>=5&&!empty;
     const owned=new Set();
-    for(const el of (sockets?.querySelectorAll('[data-skill],.skill-slot')||[])){
-      const data=normalize([el.getAttribute('data-skill'),el.getAttribute('title'),el.getAttribute('aria-label'),el.dataset?.skillName,el.textContent].filter(Boolean).join(' '));
-      for(const s of skills) if(s.re.test(data)||s.slot.test(data)) owned.add(s.id);
+    let unrecognized=0,occupied=0;
+    // v1.1.2 僅信任「實際已裝備技能格」的個別資料。
+    // 舊版掃描全部 [data-skill]（含非持有的卡片）可能把未學技能誤認成已擁有。
+    for(const el of slots){
+      if(el.classList.contains('empty')||el.getAttribute('data-skill')==='')continue;
+      const im=el.querySelector('img');
+      const data=normalize([
+        el.getAttribute('data-skill'),el.getAttribute('title'),
+        el.getAttribute('aria-label'),el.dataset?.skillName,
+        im?.getAttribute('alt'),im?.getAttribute('title'),
+        im?.getAttribute('src'),el.textContent
+      ].filter(Boolean).join(' '));
+      if(!data)continue;
+      occupied++;
+      const hits=skills.filter(skill=>skill.re.test(data)||skill.slot.test(data));
+      if(hits.length===1)owned.add(hits[0].id);
+      else unrecognized++;
     }
-    // 觀測到從已取得多招回到全空格，可視為新場次，清除上場的普攻紀錄。
-    if(lastOwnedCount!==null && lastOwnedCount>=2 && owned.size===0){
+    // 防止錯把虛擬卡片/武器圖示也當成主動技能：需要五個不同核心逐格辨識。
+    const coreSlotsVerified=slots.length>=5 && skills.every(skill=>owned.has(skill.id));
+    const known=!!sockets&&(!!m||slots.length>0);
+    if(lastOwnedCount!==null && lastOwnedCount>=2 && occupied===0 && !full){
       basicLearned=false;
-      diagnostic('偵測到新場次空技能欄，重置普攻紀錄；重新湊六招');
+      diagnostic('已偵測到新場次技能欄重置；重新取得普攻第一招');
     }
-    if(!!sockets&&(!!m||slots.length>0))lastOwnedCount=owned.size;
-    const ready=!!sockets&&(!!m||slots.length>0) &&
-      skills.every(skill=>owned.has(skill.id)) && basicLearned;
-    return {full,known:!!sockets&&(!!m||slots.length>0),owned,basicLearned,ready};
+    if(known)lastOwnedCount=occupied;
+    const ready=known&&coreSlotsVerified&&basicLearned;
+    return {full,known,owned,unrecognized,occupied,coreSlotsVerified,basicLearned,ready};
   }
   const order=skill=>core.findIndex(s=>s.id===skill.id);
   function collecting(info){return !info.ready;}
@@ -146,9 +161,12 @@
   // 保底只允許先選六核心；影步/背刺即使耗盡放逐和重抽也絕不選。
   function fallbackScore(card,info){
     if(isHardBan(card))return -Infinity;
-    if(isNew(card)&&info.full&&coreOf(card)?.id!=='basic')return -Infinity;
-    const s=coreOf(card);
-    if(s)return 100000+scoreCard(card,info);
+    const skill=coreOf(card);
+    // v1.1.2：核心未齊前「絕對不可」保底選非核心／不認得的技能，
+    // 否則五個主動欄被佔滿，後續無法再取得刀扇等核心。
+    if(!info.ready && !skill)return -Infinity;
+    if(isNew(card)&&info.full&&skill?.id!=='basic')return -Infinity;
+    if(skill)return 100000+scoreCard(card,info);
     return isNew(card)?100:1000+upgradeScore(card);
   }
   // v1.14：辨識寶箱卡片上的「尋寶率正增益」，包括神祇。
@@ -251,18 +269,17 @@
     console.info('[HANS 流氓 v'+version+'] '+s);
   }
   function tryBanish(cards,info){
-    // 絕對門檻：未確認六招全部取得（含普攻第一招），不能按任何放逐。
-    if(!info.ready)return false;
-    // 刀扇永不放逐；影步、背刺第一優先，其次其他非核心，再來其餘五核心。
+    // 第二道保險：五格必須逐格確認五種主動核心，普攻第一招也必須已選過。
+    // 缺任何一招（或 DOM 證據不明確），本函式不得消耗任何放逐次數。
+    if(!info.ready || !info.coreSlotsVerified || !info.basicLearned)return false;
+    // 只放逐影步、背刺及其他「非核心」技能選項；永不放逐六核心卡。
     const ranked=cards.map(card=>{
       const skill=coreOf(card),name=cardName(card);
       const banIndex=hardBans.findIndex(b=>b.re.test(name));
       return {card,name,skill,banIndex};
-    }).filter(x=>x.skill?.id!=='knife')
-      .sort((a,b)=>{
-        const rank=x=>x.banIndex>=0?x.banIndex:(x.skill?4:2);
-        return rank(a)-rank(b);
-      });
+    }).filter(x=>x.banIndex>=0 || !x.skill)
+      .sort((a,b)=>a.banIndex>=0&&b.banIndex<0?-1:
+                    a.banIndex<0&&b.banIndex>=0?1:a.banIndex-b.banIndex);
     for(const x of ranked){
       const btn=banishBtn(x.card);
       if(!btn)continue;
@@ -345,7 +362,14 @@
       if(backup)chooseCard(backup,'寶箱保底');return;
     }
     // 優先順序固定：刀扇有就點；缺招先補；六招齊後才可放逐。
-    const info=slotInfo(panel),{phase,choice}=chooseSkill(cards,info);
+    const info=slotInfo(panel);
+    // 例：遊戲顯示「技能 5/5」卻仍缺刀扇；這一局不可用放逐補救已佔用的技能欄。
+    if(info.full && !info.coreSlotsVerified){
+      diagnostic('技能5/5但五個主動核心未齊／無法逐格核實：缺 '+missingCoreText(info)+
+        '；本局暫停選技及放逐，避免誤選／浪費。');
+      return;
+    }
+    const {phase,choice}=chooseSkill(cards,info);
     if(choice){chooseCard(choice.card,phase?'刀扇優先／補六招':'刀扇最高優先');return;}
     if(!info.ready){
       // 前期絕不動用放逐，包括影步與背刺；改用重抽。
@@ -356,7 +380,7 @@
       if(tryReroll(panel,'六招已齊，尋找刀扇'))return;
     }
     // 重抽耗盡／放逐用完後保底：絕不能選影步、背刺。
-    // 六招未齊：保底優先核心。六招已齊：優先其他五核心升級，盡量不學新雜技。
+    // 六招未齊：只能選已認得的核心卡，沒有就等待人工處理，絕不填入雜技。
     const pool=cards.map(card=>({card,score:fallbackScore(card,info)}))
       .filter(x=>Number.isFinite(x.score)).sort((a,b)=>b.score-a.score);
     if(pool.length){
@@ -364,7 +388,9 @@
       chooseCard(x.card,coreOf(x.card)?'資源耗盡：核心安全保底':'資源耗盡：非禁招保底');
       return;
     }
-    diagnostic('只有影步／背刺或無效卡，且放逐／重抽不可用：停止，請手動處理');
+    diagnostic(!info.ready?
+      '六核心未齊，沒有安全核心卡可選；重抽已用完／不可用，停止自動選技，絕不浪費放逐':
+      '只有影步／背刺或無效卡，且放逐／重抽不可用：停止，請手動處理');
   }
   function safeTick(){try{tick();}catch(e){diagnostic('腳本錯誤：'+(e?.message||e));console.error('[HANS 流氓]',e);}}
   function enable(on){

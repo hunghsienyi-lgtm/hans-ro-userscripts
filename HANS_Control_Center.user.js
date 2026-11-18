@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜左側控制中心｜巡走＋選技（模組獨立）
 // @namespace    hunghung-ro-local-tools
-// @version      1.0.4
-// @description  v1.0.4：左側下方新增即時巡走資訊：目前執行動作、實際遊戲時間、下次磁鐵出發時間與倒數、選技狀態；直接讀已載入腳本，模組保持獨立。
+// @version      1.0.5
+// @description  v1.0.5：即時動態顯示巡走狀態、遊戲時間、磁鐵倒數，選技狀態也改讀巫師/流氓腳本的當前診斷（選卡、等待、放逐）。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-start
 // @grant        none
@@ -14,7 +14,7 @@
   'use strict';
   const ROOT_ID='hans-left-control-center-v100';
   const CSS_ID='hans-left-control-center-css-v100';
-  const HUB_VERSION='1.0.4';
+  const HUB_VERSION='1.0.5';
   const SAVED_KEY='hans-ro-left-control-center-v101';
   const PREVIOUS_SAVED_KEY='hans-ro-left-control-center-v100';
   const MODULES=Object.freeze([
@@ -155,7 +155,17 @@
     const skills=MODULES.filter(m=>m.group==='選技')
       .map(spec=>({spec,source:sourceFor(spec)})).filter(x=>isEnabled(x.source));
     if(skills.length){
-      setLine(liveSkill,skills.map(x=>x.spec.name+' '+(runtimeVersion(x.source)?'v'+runtimeVersion(x.source):'v?')).join('／'));
+      const active=skills.map(x=>{
+        // 使用正在執行的獨立選技腳本既有診斷，不額外替腳本做選卡決定。
+        // 流氓回報 data-hans-script-status，巫師原本把訊息放在 title 的「目前：」。
+        const data=String(x.source.dataset?.hansScriptStatus||'').trim();
+        const title=String(x.source.title||'');
+        const fromTitle=title.includes('目前：')?title.split('目前：').pop().trim():
+          title.includes('切換｜')?title.split('切換｜').pop().trim():'';
+        const status=(data||fromTitle||'已開啟，等待狀態回報').slice(0,100);
+        return x.spec.name+'｜'+status;
+      });
+      setLine(liveSkill,active.join('／'));
     }else setLine(liveSkill,'目前未開啟選技');
     if(!patrolling.length){
       setLine(liveMode,'巡走未啟用');

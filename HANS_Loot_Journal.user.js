@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.9.12
-// @description  v0.9.12：撤回誤整合的裝備巡檢，恢復獨立選關與戰利品功能；巡檢請使用獨立腳本。
+// @version      0.9.13
+// @description  v0.9.13：修正作者改用「和船長說話（空白鍵）」後自動重進無法辨識；兼容原「與遠征隊長交談」，其餘選關、周目、戰利品與安全確認流程不變。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.9.12';
+  const VERSION = '0.9.13';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -748,7 +748,7 @@
 
   const W = {
     back: /^(?:返回[角腳]色|回到角色|返回人物|returntocharacter|backtocharacter)$/i,
-    talk: /^(?:與|和|跟)?(?:遠征)?隊長(?:交談|談話|對話|說話)(?:(?:空格|space)|[（(](?:空格|space)[）)])?$/i,
+    talk: /^(?:與|和|跟)?(?:(?:遠征)?隊長|船長)(?:交談|談話|對話|說話)(?:(?:空格|空白鍵|space)|[（(](?:空格|空白鍵|space)[）)])?$/i,
     forest: /^(?:斐[揚楊扬]森林|斐[揚楊扬]樹林|payonforest)$/i,
     cave: /^(?:斐[揚楊扬](?:洞穴|洞窟)|payoncave)$/i,
     depart: /^(?:出發|出发|出征|depart|startexpedition)$/i,
@@ -2200,7 +2200,7 @@
         if(sellDryEnabled && findSellDryMerchantPanel()){
           tell('商人視窗仍開啟，請手動關閉後再自動重進');return;
         }
-        action('talk',talk,'與隊長交談',4,1800);return;
+        action('talk',talk,'和船長／遠征隊長說話',4,1800);return;
       }
       phase('waiting');tell('等待結算／主城／遠征／難度視窗（目標：'+targetLabel()+'）');
     } catch(e) {tell('偵測錯誤：請截圖並回報');console.error('[HANS 整合選關]',e);}

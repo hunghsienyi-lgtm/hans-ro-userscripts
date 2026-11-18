@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.9.7
-// @description  v0.9.7：新增六周目完整選關及分頁辨識，依實際畫面採用無改版後綴的地圖名稱，掃描完整關卡並驗證解鎖狀態。
+// @version      0.9.8
+// @description  v0.9.8：聖誕節與元宵燈會特殊關卡正式加入一至六周目；沿用各周目地圖命名、獨立選關、現場解鎖查驗及自動關卡掃描。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.9.6';
+  const VERSION = '0.9.8';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -1048,6 +1048,20 @@
   ]){
     if(Object.values(STAGES).some(x=>x.world===6&&norm(x.name)===norm(name)))continue;
     STAGES['hans:w6:'+norm(name)]={name,re:namePattern(name),unlocked:null,level,world:6,verified:false};
+  }
+  // 節慶特殊關卡：2026-11-18 截圖核對五周目有
+  // 「聖誕節・改⁴」、「元宵燈會・改⁴」；其餘周目依既有命名規則建立候選。
+  // 六周目沿用原名，與一周目分別使用不同的周目鍵值，不能混用。
+  // 候選不代表已解鎖，出發前仍須從當前周目畫面重新驗證。
+  const SEASONAL_STAGE_NAMES=['聖誕節','元宵燈會'];
+  for(const base of SEASONAL_STAGE_NAMES){
+    for(const world of [1,2,3,4,5,6]){
+      const name=stageLabelForWorld(base,world);
+      const existing=Object.values(STAGES).find(stage=>stage.world===world&&norm(stage.name)===norm(name));
+      if(existing)continue; // 不覆寫先前掃描的解鎖、關卡等級與驗證狀態。
+      const key='hans:w'+world+':'+norm(name);
+      STAGES[key]={name,re:namePattern(name),unlocked:null,level:'',world,verified:false};
+    }
   }
   seedKnownStageCandidates();
 

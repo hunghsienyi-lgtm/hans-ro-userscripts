@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 二轉巫師｜五核心自動選技＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.31
-// @description  v1.31：巫師寶箱先選非神祇正尋寶率、沒得選先重抽再考慮尋寶神祇；持有神祇禁止替換，保留補滿5/5、放逐與其他道具排序。
+// @version      1.32
+// @description  v1.32：巫師寶箱非神祇尋寶率優先，先重抽再考慮神祇；新增神祇替換確認視窗硬阻擋，不覆蓋已持有神祇，其他排序照舊。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
 // @run-at       document-idle
@@ -15,7 +15,7 @@
   if (document.getElementById('hans-mage-autoskill-v123')) return;
   const potion = [/傷害藥水|damage potion|potion of damage/i, /範圍藥水|area potion|potion of area/i];
   const label = '巫師';
-  const version = '1.31';
+  const version = '1.32';
   const shown = el => {
     if (!el || !el.isConnected || el.disabled || !el.getClientRects().length) return false;
     for (let n=el, i=0; n && i<12; n=n.parentElement, i++) {
@@ -365,13 +365,19 @@
     return owned===target||owned.startsWith(target)||owned.includes(target+'lv');
   }
   function safeTreasureCard(card,items){
-    if(items?.full&&isNew(card))return false;
+    if((items?.full||(!items?.known&&treasureState.lastCount>=5))&&isNew(card))return false;
     if(!isDeityCard(card))return true;
     if(treasureState.heldDeity||treasureState.pendingDeityProof)
       return !isNew(card)&&sameHeldDeity(card);
     // 道具欄不完整時，無法確認先前沒拿過神祇：禁止冒險開另一位神祇。
     if(items?.known&&items.count>0&&!treasureState.knownDeityInventory)return false;
     return true;
+  }
+  function isDeityReplacementPrompt(node){
+    if(!node)return false;
+    const t=String(node.innerText||node.textContent||'').normalize('NFKC').replace(/\s+/g,'');
+    // 二次確認即使選卡階段誤判，也不能替換既有神祇。
+    return /(?:取代|替換|更換|覆蓋).{0,36}(?:神祇|神祗|之神)|(?:神祇|神祗|之神).{0,36}(?:取代|替換|更換|覆蓋)/i.test(t);
   }
   function orderedSafeTreasure(cards,items){
     return cards.filter(card=>safeTreasureCard(card,items));
@@ -560,7 +566,7 @@
     if (message===lastDiagnostic) return;
     lastDiagnostic=message;
     if (button) button.title='Shift+1 切換；目前：'+message;
-    console.info('[HANS 巫師 v1.31]',message);
+    console.info('[HANS 巫師 v1.32]',message);
   }
   let nextRerollAt=0, pending=null, lastChoiceAt=0, lastChoiceKey='',choiceTries=0;
   const attempts=new WeakMap();
@@ -674,6 +680,10 @@
       const isOurs=!!pending && !!card &&
         (pending.card===card || (cardName(card)===pending.name && performance.now()-pending.at<4500));
       if(isOurs){
+        if(chest && isDeityReplacementPrompt(asking)){
+          diagnostic('神祇替換確認視窗已攔截：絕不自動確認覆蓋｜'+cardName(card));
+          pending=null;return;
+        }
         if(chest && !safeTreasureCard(card,treasureItemsInfo(panel))){
           diagnostic('拒絕確認：可能觸發神祇替換 '+cardName(card));
           pending=null;return;
@@ -778,12 +788,12 @@
   }
   const safeTick=()=>{try{tick();}catch(error){
     diagnostic('腳本錯誤：'+String(error?.message||error));
-    console.error('[HANS 巫師 v1.31]',error);
+    console.error('[HANS 巫師 v1.32]',error);
   }};
   function enable(on){
     clearInterval(timer);
     timer=on?setInterval(safeTick,200):null;
-    button.textContent=label+'選技：'+(on?'開':'關')+' v1.31';
+    button.textContent=label+'選技：'+(on?'開':'關')+' v1.32';
     button.style.background=on?'#186442':'#384455';
     diagnostic(on?'已開啟，等待選卡畫面':'已關閉；按鈕或 Shift+1 開啟');
   }
@@ -792,7 +802,7 @@
     if(document.getElementById('hans-mage-autoskill-v123'))return;
     button=document.createElement('button');button.type='button';
     button.id='hans-mage-autoskill-v123';
-    button.dataset.hansScriptVersion='1.31';
+    button.dataset.hansScriptVersion='1.32';
     button.style.cssText='position:fixed;left:8px;bottom:84px;z-index:2147483647;color:white;border:1px solid white;border-radius:5px;padding:5px 8px;cursor:pointer';
     button.onclick=()=>{
       const on=timer===null;

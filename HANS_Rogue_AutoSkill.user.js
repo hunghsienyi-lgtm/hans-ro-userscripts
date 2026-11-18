@@ -2,7 +2,7 @@
 // @name         HANS RO 盜賊→流氓｜六核心自動選技＋優先放逐＋尋寶寶箱
 // @namespace    ro-local-profiles
 // @version      1.1.3
-// @description  流氓v1.1.2：修正缺核心時誤選非核心填滿5格；未證實五個主動核心+普攻前絕不放逐；滿格缺招停止而不浪費資源。
+// @description  流氓v1.1.3：沿用v1.1.2的核心技能保護邏輯，新增向左側控制中心回報本機實際載入版本。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
 // @run-at       document-idle

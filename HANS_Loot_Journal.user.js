@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.9.15
-// @description  v0.9.15：結算返回角色後，若出現「選擇大廳」視窗，安全辨識並自動按「離線玩」後繼續選關重進；只操作確認的選大廳視窗，不點其他選項。
+// @version      0.9.16
+// @description  v0.9.16：返回角色後選擇大廳自動點「離線玩」；同步兼容三分鐘短刷結束後的大廳選擇，保留正常戰利品封存與原重進設定。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.9.15';
+  const VERSION = '0.9.16';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -1521,7 +1521,7 @@
     if(shortExit.phase==='done'){
       if(incomplete){tell('已點捨棄，等待確認視窗關閉');return true;}
       if(now-shortExit.at>18000){shortFail('捨棄後沒有返回主城');return true;}
-      if(findControl(W.talk)||expeditionOpen()||difficultyOpen()){
+      if(chooseLobbyOfflineButton()||findControl(W.talk)||expeditionOpen()||difficultyOpen()){
         resetShortExit();return false;
       }
       tell('等待主城載入');return true;

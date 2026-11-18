@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 流氓｜選關＋戰利品＋傳說短劍清背包
 // @namespace    ro-rogue-loot-journal
-// @version      1.0.2
-// @description  v1.0.2 流氓專用：保留傳說短劍及指定八部位前十，返程等待與按鍵間隔加強、可調水平微移；每場清背包重進。
+// @version      1.0.3
+// @description  v1.0.3 流氓專用：返回角色最短5秒、保留結算穩定檢查；Discord僅傳短劍等裝備掃描摘要，戰利品總表不再發送。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -26,9 +26,9 @@
   const RUN_KEY = 'ro-rogue-loot-journal-v05-current-run';
   const HISTORY_KEY = 'hans-rogue-stage-loot-run-history-v06';
   const DIFFICULTY_KEY = 'hans-rogue-stage-loot-pending-difficulty-v06';
-  const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
+  const RESULT_MIN_MS = 5000, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-rogue-loot-journal-v05-ui';
-  const VERSION = '1.0.0';
+  const VERSION = '1.0.3';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -48,15 +48,13 @@
       rawText:x.rawText||'',origin:'v0.1歷史匯入（待核對）'
     }));
   }
-  let settings = {...{running:true,notify:true},...jsonRead(SETTINGS_KEY,{})};
-  let outbox=jsonRead(OUTBOX_KEY,[]);
-  if (!Array.isArray(outbox)) outbox=[];
-  // 升級前可能仍留有尚未發送的「金色逐件通知」。
-  // 只移除這一類待送通知；保留已排隊的每場總表及使用者手動測試訊息。
-  const previousOutboxLength=outbox.length;
-  outbox=outbox.filter(entry=>!/^金色[｜|]/.test(String(entry?.name||'')));
-  if(outbox.length!==previousOutboxLength)
-    saveJSON(OUTBOX_KEY,outbox);
+  let settings = {...{running:true,notify:false},...jsonRead(SETTINGS_KEY,{})};
+  // 使用者明確指定 Discord 只收「裝備掃描摘要」：關閉戰利品的通知與所有舊待送。
+  // 保留 settings.running 以便正常辨識、封存本機戰利品並允許自動返回角色。
+  settings.notify=false;
+  saveJSON(SETTINGS_KEY,settings);
+  let outbox=[]; // 待送舊版總表不能在未來重試時送出。
+  if((jsonRead(OUTBOX_KEY,[])||[]).length)saveJSON(OUTBOX_KEY,outbox);
   let currentRun=jsonRead(RUN_KEY,null);
   if (!currentRun || typeof currentRun!=='object' || !currentRun.id || !['active','settled'].includes(currentRun.phase)) currentRun=null;
   let resultSeenAt=0, resultStableSince=0, resultFingerprint='';
@@ -98,7 +96,7 @@
   function updateUI(){
     if(countEl)countEl.textContent=`共 ${records.length}｜本場 ${runRecords().length}｜精簡 ${runRecords().filter(r=>/精簡掉落提示/.test(r.origin||'')).length}`;
     if(recentEl)recentEl.textContent=`最近：${lastRecord?`${lastRecord.name}（${typeName(lastRecord)}）`:'尚無'}`;
-    if(discordEl)discordEl.textContent=`Discord：${settings.notify?'開':'關'}｜僅每場結束總表｜待送 ${outbox.length}${sending?'（發送中）':''}`;
+    if(discordEl)discordEl.textContent='Discord：僅裝備掃描摘要；戰利品只存本機';
     if(stateEl)stateEl.textContent=lastStatus;
   }
   function linesFrom(root){
@@ -493,10 +491,9 @@
     currentRun.phase='settled';currentRun.settledAt=nowISO();currentRun.summaryQueued=true;
     saveRun();
     runHistory.push(summarizeResultsForExport(currentRun));saveJSON(HISTORY_KEY,runHistory);
-    const payloads=runSummaryPayloads(currentRun);
-    if(settings.notify)payloads.forEach((payload,i)=>queueDiscordPayload(payload,`本場總表 ${i+1}/${payloads.length}`));
+    // 不再產生或排隊發送每場戰利品總表；結果照常封存在本機。
     lastSummaryText=`已結算：可讀紀錄 ${runRecords().length} 件，掉落縮圖 ${currentRun.summaryObserved?.dropIcons??'?'}、卡片縮圖 ${currentRun.summaryObserved?.cardIcons??'?'}（${reason}）`;
-    status(settings.notify?`${lastSummaryText}，已加入 DC 待送`:`${lastSummaryText}，Discord 已關閉`);
+    status(`${lastSummaryText}｜本機已保存；Discord 僅傳裝備掃描摘要`);
     updateUI();
   }
   function checkResult(){
@@ -545,10 +542,7 @@
     currentRun.difficulty=currentRun.difficulty||{stage:stageName||'未確認'};
     currentRun.phase='settled';currentRun.settledAt=nowISO();currentRun.summaryQueued=true;
     saveRun();runHistory.push(summarizeResultsForExport(currentRun));saveJSON(HISTORY_KEY,runHistory);
-    if(settings.notify){
-      const msgs=runSummaryPayloads(currentRun);
-      msgs.forEach((msg,i)=>queueDiscordPayload(msg,'3分鐘主動離場 '+(i+1)+'/'+msgs.length));
-    }
+    // 3分鐘刷卡的主動離場也只儲存本機，不再傳戰利品 Discord。
     lastSummaryText='主動離場：可讀紀錄 '+runRecords().length+' 筆（無正常結算）';
     status(lastSummaryText);updateUI();
     return true;
@@ -601,44 +595,9 @@
         footer:{text:`RO Survivors · 本機畫面辨識 · ${rec.id.slice(0,18)}`},timestamp:rec.time}]
     };
   }
-  function queueDiscordPayload(payload,name){
-    outbox.push({id:`msg-${Date.now()}-${Math.random().toString(36).slice(2,9)}`,payload,name,attempts:0,nextTry:0});
-    saveJSON(OUTBOX_KEY,outbox);updateUI();sendNext();
-  }
-  function sendNext(){
-    if(sending||!settings.notify||!outbox.length)return;
-    if(!readWebhook()){status('尚未設定 Discord Webhook：請從戰利品面板設定');return;}
-    if(typeof GM_xmlhttpRequest!=='function'){status('Discord 無法送出：需要 Tampermonkey 的跨網域權限');return;}
-    const now=Date.now(),first=outbox[0];
-    if(first.nextTry>now||nextAllowedAt>now)return;
-    sending=true;updateUI();
-    GM_xmlhttpRequest({
-      method:'POST',url:readWebhook(),headers:{'Content-Type':'application/json'},
-      data:JSON.stringify(first.payload),timeout:12000,
-      onload:r=>{
-        sending=false;
-        if(r.status===204||r.status===200){
-          outbox.shift();saveJSON(OUTBOX_KEY,outbox);nextAllowedAt=Date.now()+1500;
-          status(`Discord 已送達：${first.name}`);
-        }else{
-          first.attempts++;
-          let retry=5000*Math.min(12,first.attempts);
-          if(r.status===429){try{const j=JSON.parse(r.responseText||'{}');retry=Math.max(retry,Number(j.retry_after||0)*1000+1000);}catch{}}
-          if([401,403,404].includes(r.status)){
-            settings.notify=false;saveJSON(SETTINGS_KEY,settings);
-            status(`Discord ${r.status}：Webhook 無效或無權限，已暫停推播（本機資料仍保留）`);
-          }else status(`Discord ${r.status} 暫時失敗，保留待送並將重試`);
-          first.nextTry=Date.now()+Math.min(300000,retry);saveJSON(OUTBOX_KEY,outbox);
-        }
-        updateUI();
-      },
-      ontimeout:()=>failSend('逾時'),onerror:()=>failSend('網路錯誤')
-    });
-    function failSend(reason){
-      sending=false;first.attempts++;first.nextTry=Date.now()+Math.min(300000,4000*first.attempts);
-      saveJSON(OUTBOX_KEY,outbox);status(`Discord ${reason}，保留待送`);updateUI();
-    }
-  }
+  // 戰利品系統只負責本機記錄。完整清背包模組有自己的 Discord 掃描摘要傳送器。
+  function queueDiscordPayload(payload,name){return false;}
+  function sendNext(){return;}
   function exportData(kind){
     const day=new Date().toISOString().slice(0,10),csvSafe=v=>{
       let s=String(v??'');if(/^\s*[=+@\-]/.test(s))s="'"+s;
@@ -677,14 +636,14 @@
     ui.innerHTML=`<button type="button" id="ror4-open" style="border:0;background:transparent;color:white;cursor:pointer;font-weight:700" title="HANS 流氓選關＋戰利品 v${VERSION} 已載入">📦 HANS 流氓選關＋戰利品 <span style="font-size:10px;color:#bcd8fb;font-weight:600;white-space:nowrap">v${VERSION}</span> <span id="ror4-count">共 0</span> <span id="ror4-stage-mini" style="font-size:10px;opacity:.83">重進：關</span> ▾</button>
       <div id="ror4-menu" hidden style="width:265px;max-width:80vw;max-height:60vh;overflow-y:auto;padding-top:6px">
         <div style="font-size:10px;opacity:.78">HANS 整合 v${VERSION} 已載入｜${location.hostname}</div><div id="ror4-state">等待掉寶</div><div id="ror4-recent" style="overflow-wrap:anywhere">最近：尚無</div>
-        <div id="ror4-discord">Discord：開｜待送 0</div>
+        <div id="ror4-discord">Discord：僅傳裝備掃描摘要</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
           <button id="ror4-toggle">暫停紀錄</button><button id="ror4-notify">關閉 DC</button>
-          <button id="ror4-webhook">設定 DC Webhook</button><button id="ror4-test">傳送 DC 測試</button><button id="ror4-retry">重試待送</button>
+          <button id="ror4-webhook">設定掃描 DC Webhook</button><button id="ror4-test">傳送 DC 測試</button><button id="ror4-retry">重試待送</button>
           <button id="ror4-csv">匯出 CSV</button><button id="ror4-runs">場次 CSV</button><button id="ror4-json">匯出 JSON</button>
           <button id="ror4-scan">立即掃描</button><button id="ror4-diag">複製診斷</button>
         </div>
-        <div style="opacity:.8;font-size:10px;padding-top:5px">所有品質（含傳說金色）都先存本機；每場結束才發 Discord 戰利品總表，不再逐件通知。請定期匯出備份。</div>
+        <div style="opacity:.8;font-size:10px;padding-top:5px">戰利品只保存在本機，不再發送總表；Discord 僅由每場清背包流程傳送裝備掃描摘要。請定期匯出備份。</div>
       </div>`;
     ui.querySelectorAll('button:not(#ror4-open)').forEach(b=>{b.style.cssText='background:#365d96;color:white;border:1px solid #83a7d8;border-radius:4px;padding:4px 6px;cursor:pointer';});
     document.body.append(ui);
@@ -693,8 +652,7 @@
     ui.querySelector('#ror4-open').onclick=()=>menuEl.hidden=!menuEl.hidden;
     ui.querySelector('#ror4-toggle').onclick=e=>{settings.running=!settings.running;saveJSON(SETTINGS_KEY,settings);
       e.target.textContent=settings.running?'暫停紀錄':'啟動紀錄';status(settings.running?'開始監看':'紀錄已暫停');};
-    ui.querySelector('#ror4-notify').onclick=e=>{settings.notify=!settings.notify;saveJSON(SETTINGS_KEY,settings);
-      e.target.textContent=settings.notify?'關閉 DC':'啟用 DC';status(settings.notify?'Discord 推播已開啟':'Discord 推播已關閉');if(settings.notify)sendNext();updateUI();};
+    ui.querySelector('#ror4-notify').onclick=()=>{settings.notify=false;saveJSON(SETTINGS_KEY,settings);};
     ui.querySelector('#ror4-webhook').onclick=()=>{
       const next=prompt('請貼上 Discord Webhook（僅存於 Tampermonkey 本機設定，不會寫入公開程式）','');
       if(next===null)return;
@@ -704,10 +662,10 @@
       }
       GM_setValue(WEBHOOK_KEY,value);
       status('Webhook 已儲存於本機，沒有寫進公開腳本');
-      if(settings.notify)sendNext();
+      // Webhook 僅供裝備掃描摘要，不會傳送戰利品。
     };
     ui.querySelector('#ror4-test').onclick=()=>{
-      if(!settings.notify){status('請先啟用 DC 推播');return;}
+      if(!settings.notify){status('戰利品通知已停用；僅裝備掃描摘要會發送');return;}
       const d=new Date(),test={id:`test-${Date.now()}`,time:d.toISOString(),type:'測試',name:'連線測試（非實際掉寶）',
         rarity:'',tier:null,baseStats:[],attributes:['這則訊息用來檢查 Discord Webhook 是否正常'],origin:'手動測試'};
       queueDiscordPayload(discordPayload(test),'連線測試');status('Discord 測試訊息已加入待送');
@@ -719,7 +677,11 @@
     ui.querySelector('#ror4-scan').onclick=()=>{scanPopup('手動掃描');scanSummaryCards();scanSummaryDrops();checkResult();status(lastDiagnostic);};
     ui.querySelector('#ror4-diag').onclick=diagnostics;
     ui.querySelector('#ror4-toggle').textContent=settings.running?'暫停紀錄':'啟動紀錄';
-    ui.querySelector('#ror4-notify').textContent=settings.notify?'關閉 DC':'啟用 DC';
+    // 停用舊版戰利品 Discord 相關操作鈕，保留 Webhook 設定供裝備掃描摘要使用。
+    for(const suffix of ['notify','test','retry']){
+      const el=ui.querySelector('#ror4-'+suffix);
+      if(el){el.hidden=true;el.disabled=true;el.style.display='none';}
+    }
     updateUI();
   }
   function init(){

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜長時間巡走＋磁鐵｜返點失敗自動安全停靠＋Lv120後寶箱自動繼續保存
 // @namespace    hunghung-ro-local-tools
-// @version      2.4.0
-// @description  v2.4.0：修正 Lv120 前卡片累積64張卻不開。第一批>5張；後續每達20張立即開至0或Lv120；吃磁鐵也觸發；不依賴小地圖刷新；寶箱7000 Z上限不變。
+// @version      2.4.1
+// @description  v2.4.1：新增即時狀態與下一次磁鐵出發時間回報給左側控制中心；不修改巡走、撿磁鐵、選卡、Lv120及寶箱7000 Z流程。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        none
@@ -42,12 +42,21 @@
   };
   const button=document.createElement('button');
   button.id=UI_ID;button.type='button';
-  button.dataset.hansScriptVersion='2.4.0';
+  button.dataset.hansScriptVersion='2.4.1';
   button.style.cssText='position:fixed;left:8px;bottom:120px;z-index:2147483647;background:#384455;color:#fff;border:1px solid #eee;border-radius:5px;padding:5px 8px;font:12px system-ui,sans-serif;cursor:pointer;max-width:min(360px,80vw);text-align:left';
   button.title='Shift+6 長場巡走；1:55、2:55、5:55、7:55、9:55、11:55、13:55 提前找磁鐵；Boss最後倒數15秒專注追磁鐵，不返點；中途啟動立即接手；Lv120後寶箱按繼續保存。';
   button.setAttribute('aria-keyshortcuts','Shift+6');
   document.body?.appendChild(button);
-  function status(s){button.textContent='HANS 巡走｜'+s;}
+  function status(s){
+    button.textContent='HANS 巡走｜'+s;
+    // 左側控制中心直接讀取本機正在執行的原始腳本狀態，不需重新推測。
+    button.dataset.hansLiveStatus=String(s||'');
+    if(!enabled||!round.started||round.outside){
+      delete button.dataset.hansGameSeconds;
+      delete button.dataset.hansNextMagnetSeconds;
+      delete button.dataset.hansNextMagnetKind;
+    }
+  }
 
   let enabled=false,interval=null,map=null,restore=null;
   let player=null,lastPlayerAt=0,magnets=[];
@@ -617,6 +626,32 @@
     return times;
   })();
 
+  function publishPatrolTelemetry(secs){
+    if(!enabled||!round.started||round.outside||!Number.isFinite(secs)){
+      delete button.dataset.hansGameSeconds;
+      delete button.dataset.hansNextMagnetSeconds;
+      delete button.dataset.hansNextMagnetKind;
+      return;
+    }
+    button.dataset.hansGameSeconds=String(Math.floor(secs));
+    button.dataset.hansPatrolMode=String(round.mode||'');
+    button.dataset.hansTelemetryAt=String(Date.now());
+    // 嚴格沿用本巡走腳本自己的排程與已完成紀錄，絕不猜測時間。
+    if(round.bossCountdown){
+      delete button.dataset.hansNextMagnetSeconds;
+      button.dataset.hansNextMagnetKind='boss';
+      return;
+    }
+    const next=magnetSchedule.find(m=>!round.completed.has(m)&&m>=secs-OPT.missedWindowS);
+    if(next===undefined){
+      delete button.dataset.hansNextMagnetSeconds;
+      button.dataset.hansNextMagnetKind='boss';
+    }else{
+      button.dataset.hansNextMagnetSeconds=String(next);
+      button.dataset.hansNextMagnetKind='schedule';
+    }
+  }
+
   function shortThreeMinuteModeEnabled(){
     try{return JSON.parse(localStorage.getItem('hans-ro-stage-loot-short3-v070')||'{}')?.enabled===true;}
     catch{return false;}
@@ -639,7 +674,13 @@
     // 都先按「繼續保存」，保留剩餘卡片，不再開到0張。
     if(round.started&&maybeContinueSaving()){move();return;}
     const secs=readGameTime();
-    if(secs===null){move();status('等待遊戲計時／地圖');return;}
+    if(secs===null){
+      delete button.dataset.hansGameSeconds;
+      delete button.dataset.hansNextMagnetSeconds;
+      delete button.dataset.hansNextMagnetKind;
+      move();status('等待遊戲計時／地圖');return;
+    }
+    if(round.started)publishPatrolTelemetry(secs);
     // 即使小地圖座標暫時停止刷新，已啟動場次仍可處理畫面上的已保存卡片。
     // 達20張時優先開卡，避免因磁鐵尋找／小地圖短暫卡住一直累積到64張。
     if(round.started&&maybeOpenSavedCards(secs)){move();return;}
@@ -647,6 +688,7 @@
     if(!round.started){
       // 新場次先建立人物/地圖狀態，再立即檢查已保存卡片。
       startRound(secs);
+      publishPatrolTelemetry(secs);
       if(maybeOpenSavedCards(secs)){move();return;}
     }
     // Boss 結束時 HUD 也可能跳回 0:15，不能把它誤認為下一場開局。

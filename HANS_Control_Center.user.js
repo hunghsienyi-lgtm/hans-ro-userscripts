@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜左側控制中心｜巡走＋選技（模組獨立）
 // @namespace    hunghung-ro-local-tools
-// @version      1.0.1
-// @description  v1.0.1：六個獨立模組改為一行式精簡控制面板，預設收合；修正未載入按鈕仍顯示的問題，不更動原始功能腳本。
+// @version      1.0.2
+// @description  v1.0.2：修正未偵測到巫師／森林等模組時整列消失；六個模組固定顯示，未載入標示原因，不更動原本獨立腳本。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-start
 // @grant        none
@@ -121,8 +121,18 @@
       if(!pair)continue;
       const source=sourceFor(spec);
       const {row,proxy}=pair;
-      row.hidden=!source;
-      if(!source)continue;
+      // v1.0.2：未偵測到的模組仍要顯示，不能讓巫師或森林採集整列消失。
+      row.hidden=false;
+      if(!source){
+        if(proxy.textContent!=='未載入')proxy.textContent='未載入';
+        proxy.style.backgroundColor='#6a6574';
+        proxy.disabled=true;
+        const message=spec.name+'｜'+spec.shortcut+'｜未偵測到原腳本按鈕。'+
+          '請在 Tampermonkey 確認原模組已啟用、已安裝且沒有執行錯誤；控制中心不會自行建立功能。';
+        proxy.title=message;
+        pair.name.title=message;
+        continue;
+      }
       count++;
       const raw=String(source.textContent||'').trim();
       const green=/^(?:#186442|rgb\(24,\s*100,\s*66\))$/i.test(source.style.backgroundColor||'');
@@ -140,13 +150,11 @@
       if(name?.title!==details)name.title=details;
       proxy.disabled=!!source.disabled;
     }
-    const brief=count+'/'+MODULES.length+' · '+active+' 開';
+    const brief=count+'/'+MODULES.length+' 已載入 · '+active+' 開';
     if(summary.textContent!==brief)summary.textContent=brief;
-    if(count===0)headerText.title='尚未載入任何巡走／選技模組，請先確認它們已在 Tampermonkey 啟用';
-    for(const [name,section] of groups){
-      const has=MODULES.some(spec=>spec.group===name && !!sourceFor(spec));
-      section.hidden=!has;
-    }
+    headerText.title=count===MODULES.length?'六個模組已全部偵測到':'目前載入 '+count+' 個模組，另有 '+(MODULES.length-count)+' 個未載入';
+    // 不因某個模組尚未啟用或執行失敗而隱藏整個分類。
+    for(const section of groups.values())section.hidden=false;
     const blank=byId(ROOT_ID+'-empty');
     if(blank)blank.hidden=count!==0;
   }
@@ -184,7 +192,7 @@
         proxy.textContent='關';
         proxy.addEventListener('click',()=>{
           const source=sourceFor(spec);
-          if(!source){proxy.textContent='找不到腳本按鈕';return;}
+          if(!source){proxy.textContent='未載入';proxy.title='請先在 Tampermonkey 確認此模組已啟用';return;}
           // 按下原始模組按鈕，不模擬遊戲行為，也不碰模組內部的狀態與快捷鍵。
           source.click();
           setTimeout(updateView,80);

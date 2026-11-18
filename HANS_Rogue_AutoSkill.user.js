@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 盜賊→流氓｜六核心自動選技＋優先放逐＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.2.2
-// @description  v1.2.2：已開啟寶箱三選一必須先完成選卡，即使費用達7000 Z；選完後停止再開下一箱，保留剩餘獎勵。
+// @version      1.2.3
+// @description  v1.2.3：選技能及寶箱加速版，選卡輪詢400→200ms、縮短點擊及重抽間隔；保留選卡確認、防連點、禁招及Lv120/7000Z規則。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
 // @run-at       document-idle
@@ -24,7 +24,7 @@
     return;
   }
   const label = '流氓';
-  const version = '1.2.2';
+  const version = '1.2.3';
   const potion = [/傷害藥水|damage potion|potion of damage/i, /範圍藥水|area potion|potion of area/i];
   const normalize = s => String(s||'').normalize('NFKC').replace(/\s+/g,' ').trim();
   const read = (el,selector) => normalize(el?.querySelector(selector)?.textContent||'');
@@ -385,7 +385,7 @@
       return true;
     }
     exileState.pending={at:performance.now(),count:rem,signature};
-    nextActionAt=performance.now()+650;
+    nextActionAt=performance.now()+400;
     diagnostic('技能5/5｜執行放逐 '+cardName(picked.card)+'｜剩'+(rem??'?')+'｜可放逐'+found);
     picked.btn.click();return true;
   }
@@ -396,7 +396,7 @@
     const old=attempts.get(btn);
     if(old?.marker===marker&&old.count>=2)return false;
     attempts.set(btn,{marker,count:old?.marker===marker?old.count+1:1});
-    nextActionAt=performance.now()+1500;
+    nextActionAt=performance.now()+950;
     diagnostic(why+'：重抽全部');btn.click();return true;
   }
   function chooseCard(card,reason){
@@ -406,7 +406,7 @@
     if(choiceTries>3){diagnostic('相同卡片點擊未生效，等待人工處理：'+cardName(card));return;}
     pending={card,name:cardName(card),skillId:coreOf(card)?.id||null,
       at:performance.now()};
-    nextActionAt=performance.now()+900;
+    nextActionAt=performance.now()+600;
     diagnostic('自動選擇：'+cardName(card)+'｜'+reason);
     card.click();
   }
@@ -554,11 +554,11 @@
   }
   function safeTick(){try{tick();}catch(e){diagnostic('腳本錯誤：'+(e?.message||e));console.error('[HANS 流氓]',e);}}
   function enable(on){
-    clearInterval(timer);timer=on?setInterval(safeTick,400):null;
+    clearInterval(timer);timer=on?setInterval(safeTick,200):null;
     statusVisible(on);
     if(button){button.textContent=label+'選技：'+(on?'開':'關')+' v'+version;
       button.style.background=on?'#186442':'#384455';}
-    diagnostic(on?'已啟動 v1.2.2｜等待技能選卡或5/5判斷':'尚未啟動 v1.2.2｜按 Shift+2 或左側流氓選技按鈕啟用');
+    diagnostic(on?'已啟動 v1.2.3｜等待技能選卡或5/5判斷':'尚未啟動 v1.2.3｜按 Shift+2 或左側流氓選技按鈕啟用');
   }
   function mount(){
     if(!document.body){setTimeout(mount,100);return;}

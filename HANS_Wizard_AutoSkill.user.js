@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HANS RO 二轉巫師｜五核心自動選技＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.23
+// @version      1.24
 // @description  修復Lv31已關閉翻牌後最後一張卡仍需選擇而卡住；所有仍顯示的升級卡依五核心、目標衝擊與寶箱尋寶率原規則選完。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
@@ -85,7 +85,7 @@
     return {amount:Math.max(target,impact),kind:impact>target?'衝擊':'目標'};
   }
 
-  // v1.23：二轉五核心；暴風雪 > 霜凍之術 > 三箭；「冰凍術」不是「霜凍之術」。
+  // v1.24：二轉五核心；暴風雪 > 霜凍之術 > 三箭；「冰凍術」不是「霜凍之術」。
   const coreSkills = [
     {id:'storm', label:'暴風雪', name:/暴風雪|storm\s*gust|\bblizzard\b/i,
       slot:/blizzard|storm[-_]?gust|(?:^|[_.-])storm(?:gust)?$|^stormgust$|^wizardstorm$/i},
@@ -139,7 +139,7 @@
   }
   function scoreSkill(card,info){
     const core=coreOf(card), newSkill=isNew(card), text=read(card,'.pk-lines').normalize('NFKC');
-    // v1.23：先拿缺少的五大核心技能；五核心齊全後才把 +目標／+衝擊列為第一優先。
+    // v1.24：先拿缺少的五大核心技能；五核心齊全後才把 +目標／+衝擊列為第一優先。
     // 即使卡片上同時寫有 +目標，只要它屬於「新技能」，仍按補技能處理。
     if(newSkill && info.full) return {score:-Infinity,reason:'技能格已滿'};
     if(newSkill){
@@ -291,7 +291,7 @@
     if (message===lastDiagnostic) return;
     lastDiagnostic=message;
     if (button) button.title='Shift+1 切換；目前：'+message;
-    console.info('[HANS 巫師 v1.23]',message);
+    console.info('[HANS 巫師 v1.24]',message);
   }
   let nextRerollAt=0, pending=null, lastChoiceAt=0, lastChoiceKey='',choiceTries=0;
   const attempts=new WeakMap();
@@ -404,12 +404,12 @@
   }
   const safeTick=()=>{try{tick();}catch(error){
     diagnostic('腳本錯誤：'+String(error?.message||error));
-    console.error('[HANS 巫師 v1.23]',error);
+    console.error('[HANS 巫師 v1.24]',error);
   }};
   function enable(on){
     clearInterval(timer);
     timer=on?setInterval(safeTick,400):null;
-    button.textContent=label+'選技：'+(on?'開':'關')+' v1.23';
+    button.textContent=label+'選技：'+(on?'開':'關')+' v1.24';
     button.style.background=on?'#186442':'#384455';
     diagnostic(on?'已開啟，等待選卡畫面':'已關閉；按鈕或 Shift+1 開啟');
   }
@@ -418,6 +418,7 @@
     if(document.getElementById('hans-mage-autoskill-v123'))return;
     button=document.createElement('button');button.type='button';
     button.id='hans-mage-autoskill-v123';
+    button.dataset.hansScriptVersion='1.24';
     button.style.cssText='position:fixed;left:8px;bottom:84px;z-index:2147483647;color:white;border:1px solid white;border-radius:5px;padding:5px 8px;cursor:pointer';
     button.onclick=()=>{
       const on=timer===null;

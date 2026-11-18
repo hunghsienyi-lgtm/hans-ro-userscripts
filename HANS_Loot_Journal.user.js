@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.9.19
-// @description  v0.9.19：每場離線玩後全自動清背包再重進；停止重進時同步中止巡檢與商人，並防止舊版賣裝模擬干擾。
+// @version      0.9.20
+// @description  v0.9.20：離線玩後先從關卡／遠征視窗按「關閉」回主城，驗證視窗消失後自動清背包與商人販賣，完成才重進原關卡。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -28,7 +28,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.9.19';
+  const VERSION = '0.9.20';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -1139,7 +1139,7 @@
   }
   function armInvAfterOffline(){
     if(!invCleanEnabled||invJob)return false;
-    invJob={id:'round-'+Date.now()+'-'+Math.random().toString(36).slice(2,8),status:'armed',at:Date.now()};
+    invJob={id:'round-'+Date.now()+'-'+Math.random().toString(36).slice(2,8),status:'armed',at:Date.now(),closeAttempts:0,lastCloseAt:0,stageClosed:false};
     saveInvJob();return true;
   }
   document.addEventListener('hans-ro-stage-inventory-ready',()=>{invCleanerReady=true;});
@@ -1175,6 +1175,30 @@
       updateSellDryControls();
     }
   });
+  // 「離線玩」之後遊戲仍停留在遠征／關卡視窗，必須按該視窗底部「關閉」才回主城。
+  // 僅在本場待清背包且確定看到關卡列表時，才尋找關閉按鈕。
+  function findPostOfflineStageClose(){
+    if(!expeditionOpen())return null;
+    const rows=stageRows();
+    if(rows.length<2)return null;
+    const buttons=[...document.querySelectorAll('button,[role="button"],input[type="button"]')]
+      .filter(el=>!hud.contains(el)&&shown(el)&&!el.disabled&&
+        /^(?:關閉|關閉視窗|Close)$/iu.test(norm(el.value||el.innerText||el.textContent||el.getAttribute('aria-label')||'')));
+    if(!buttons.length)return null;
+    const scoped=buttons.filter(button=>{
+      for(let root=button.parentElement,depth=0;root&&root!==document.body&&depth<13;root=root.parentElement,depth++){
+        if(!rows.some(row=>root.contains(row.el)))continue;
+        const t=norm(root.innerText||root.textContent||'');
+        if(t.length>25000)continue;
+        if(/遠征|關卡|周目|出發/u.test(t))return true;
+      }
+      return false;
+    });
+    if(scoped.length===1)return scoped[0];
+    if(scoped.length>1)return null; // 多個視窗時不猜
+    // 單一可見的「關閉」＋確定遠征視窗正在開啟，才允許後備辨識。
+    return buttons.length===1?buttons[0]:null;
+  }
   function handleInvCleanGate(){
     if(Date.now()<invCooldown)return true;
     if(!invJob)return false;
@@ -1182,13 +1206,35 @@
       tell('⛔ 上一場清背包失敗，重進已暫停；請先檢查遊戲，再關閉重進以重設');return true;
     }
     if(invJob.status==='running')return true;
-    if(Date.now()-invJob.at>120000){invFail('離線玩後120秒內未確認主城');return true;}
-    if(chooseLobbyOfflineButton())return true;
+    if(Date.now()-invJob.at>120000){invFail('離線玩後120秒內未完成回主城');return true;}
+    if(chooseLobbyOfflineButton()){tell('等待離線玩視窗切換到關卡列表');return true;}
+    if(expeditionOpen()){
+      const now=Date.now();
+      if(now-Number(invJob.lastCloseAt||0)<1800){
+        tell('已按關卡視窗「關閉」，等待返回主城');return true;
+      }
+      if(Number(invJob.closeAttempts||0)>=2){
+        invFail('關卡視窗「關閉」點擊兩次後仍未返回主城，已停止以免誤操作');
+        return true;
+      }
+      const button=findPostOfflineStageClose();
+      if(!button){
+        tell('離線玩後關卡視窗已開，等待辨識唯一「關閉」按鈕');return true;
+      }
+      invJob.closeAttempts=Number(invJob.closeAttempts||0)+1;
+      invJob.lastCloseAt=now;
+      saveInvJob(); // 先儲存操作記錄，以防頁面跳轉後重複點擊
+      button.click();
+      tell('離線玩 → 關卡視窗「關閉」（'+invJob.closeAttempts+'/2），等待返回普隆德拉');
+      return true;
+    }
+    // 避免僅憑背景城鎮 NPC 名牌，誤以為關卡視窗已關。
+    if(invJob.lastCloseAt && Date.now()-invJob.lastCloseAt<900)return true;
     const townTalk=findControl(W.talk);
-    if(!townTalk||!shown(townTalk)){tell('等待離線玩返回主城後清背包');return true;}
-    if(!invCleanerReady){tell('等待內建清背包模組載入');return true;}
-    invJob.status='running';saveInvJob();
-    tell('主城已就緒：正在清背包，完成後才重新選關');
+    if(!townTalk||!shown(townTalk)){tell('等待關卡視窗關閉並顯示主城隊長');return true;}
+    if(!invCleanerReady){tell('已回主城，等待內建清背包模組載入');return true;}
+    invJob.status='running';invJob.stageClosed=true;saveInvJob();
+    tell('關卡視窗已關閉、主城已就緒：執行清背包，完成再重進');
     document.dispatchEvent(new CustomEvent('hans-ro-stage-inventory-request',{detail:{id:invJob.id}}));
     return true;
   }

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 流氓｜選關＋戰利品＋傳說短劍清背包
 // @namespace    ro-rogue-loot-journal
-// @version      1.0.0
-// @description  v1.0.0 流氓專用：僅留傳說短劍與指定八部位傳說GS前10；每場離線玩後回城清背包、商人販賣、返程並重進原關卡。
+// @version      1.0.1
+// @description  v1.0.1 流氓專用：傳說短劍及指定八部位GS前10；每場離線玩後清背包、賣裝、返程與重進；與巫師腳本設定分開。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -11,8 +11,8 @@
 // @connect      discord.com
 // @connect      discordapp.com
 // @noframes
-// @updateURL    https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-rogue-ro-userscripts/main/HANS_Rogue_Loot_Journal.user.js
-// @downloadURL  https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-rogue-ro-userscripts/main/HANS_Rogue_Loot_Journal.user.js
+// @updateURL    https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Rogue_Loot_Journal.user.js
+// @downloadURL  https://raw.githubusercontent.com/hunghsienyi-lgtm/hans-ro-userscripts/main/HANS_Rogue_Loot_Journal.user.js
 // ==/UserScript==
 (() => {
   'use strict';
@@ -2533,7 +2533,7 @@
     const details=String(r.detailText||'').normalize('NFKC');
     const exclude=/拳刃|長劍|雙手劍|單手劍|長矛|長戟|來福槍|法杖|魔杖|鐮刀|鏈錘|戰斧/u.test(name);
     const named=/(?:短劍|匕首|短刀|小刀|秘刃)/u.test(name) || /\b(?:dagger|dirk|knife)\b/iu.test(name);
-    const typed=/(?:武器種類|武器類型|武器分類|裝備類型)[：:\\s]{0,3}(?:短劍|匕首|短刀|小刀)/iu.test(details);
+    const typed=/(?:武器種類|武器類型|武器分類|裝備類型)[：:\s]{0,3}(?:短劍|匕首|短刀|小刀)/iu.test(details);
     const unusable=/你的職業無法使用這個道具|your (?:job|class) cannot (?:use|equip)/iu.test(details);
     return !exclude && !unusable && (named || typed);
   }
@@ -2837,7 +2837,7 @@
       const allowed=ALLOWED_SLOTS.includes(r.slot);
       const dagger=isDaggerWeapon(r);
       const isLegendary=r.rarity===TARGET_RARITY;
-      r.weaponKind=r.slot==='武器'?(dagger?'法杖':'非短劍武器'):'';
+      r.weaponKind=r.slot==='武器'?(dagger?'短劍':'非短劍武器'):'';
       r.reason=!allowed?'非指定部位':!isLegendary?'非傳說品質：'+r.rarity:r.slot==='武器'&&!dagger?'非短劍武器':'';
       r.groupLabel=r.reason?(r.slot==='武器'&&!dagger?'武器／非短劍（排除）':!isLegendary?'非傳說（排除）':'其他（排除）'):(r.slot==='武器'?'武器／傳說短劍':r.slot);
       r.rank=null;

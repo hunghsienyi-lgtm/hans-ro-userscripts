@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜逐件裝備巡檢＋GS前十保護＋Discord完整紀錄
 // @namespace    https://ro.hans-webgametw.com/
-// @version      2.4.0
-// @description  V2.4.0：內建獨立的商人路線錄製／重播、五品質一鍵販賣與返程控制；傳說前十保護、E排除、Discord摘要不變。
+// @version      2.4.1
+// @description  V2.4.1：商人路線錄製與重播、五品質勾選販賣返程；加強傳說前十保護及商人視窗關閉前的安全驗證。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -67,7 +67,7 @@
   const pane = document.createElement('section');
   pane.id = ID;
   pane.innerHTML = `
-    <div class="hp-title"><strong title="按住這個藍色標題列就能拖曳">HANS｜傳說裝備前10 V2.4.0</strong><button id="hp-toggle" title="縮小／展開">−</button></div>
+    <div class="hp-title"><strong title="按住這個藍色標題列就能拖曳">HANS｜傳說裝備前10 V2.4.1</strong><button id="hp-toggle" title="縮小／展開">−</button></div>
     <div id="hp-body">
       <div class="hp-sub">主城按 C → 背包 → 全部；E 穿戴完全跳過。只保留傳說品質：法杖、頭上中下、披肩、飾品、鞋子、盾牌、衣服（鎧甲）。</div>
       <div class="hp-sub">逐件掃描非 E：只對傳說法杖及其餘指定部位傳說裝備排 GS 前10。其他品質與非杖武器不保留；先預覽再手動確認。Discord只傳摘要。</div>
@@ -750,6 +750,10 @@
       return readCounts(panel);
     }
     async function merchantSale(){
+      const pending=scanSnapshot?.complete && scanSnapshot.version===POLICY_VERSION
+        ? scanSnapshot.items.filter(item=>item.shouldProtect && !item.protected)
+        : [];
+      if(pending.length)throw Error('掃描顯示 '+pending.length+' 件傳說前十裝備還沒保護。請先按「② 確認前10保護」，重新掃描核對後再販賣。');
       const panel=merchantPanel();
       if(!panel)throw Error('尚未找到礦石商人的「販賣／一鍵販賣」頁面。');
       const counts=checkAllFive(panel);
@@ -761,7 +765,7 @@
         return {sold:false,empty:true};
       }
       const accepted=window.confirm('確認執行遊戲「一鍵販賣」？\\n五品質全勾：'+detail+
-        '\\n僅排除商人原生保護／穿戴規則，並且不勾「包含已插卡／已精煉」。\\n這會實際出售遊戲裝備且可能無法復原，是否繼續？');
+        '\\n只有遊戲已保護／穿戴的裝備會依商人規則排除，未保護的傳說也可能被賣掉；不勾「包含已插卡／已精煉」。\\n這會實際出售遊戲裝備且可能無法復原，是否繼續？');
       if(!accepted)throw Error('你已取消販賣；沒有點擊一鍵販賣。');
       const before=panel.button;
       if(!before.isConnected || before.disabled)throw Error('一鍵販賣按鈕狀態改變，已停止。');
@@ -822,7 +826,7 @@
       }
       return true;
     }
-    function closeMerchant(){
+    async function closeMerchant(){
       const panel=merchantPanel();if(!panel)return true;
       // 僅使用明確標示的「關閉」按鈕，不能隨便點按商城的確認／購買操作。
       const candidates=[...panel.root.querySelectorAll('button')];
@@ -831,7 +835,7 @@
         const title=(b.getAttribute('title')||b.getAttribute('aria-label')||'').trim();
         return /^(關閉|×|✕|X)$/iu.test(text)||/^(關閉|關閉商人)$/u.test(title);
       });
-      if(button&&!button.disabled)button.click();
+      if(button&&!button.disabled){button.click();await merchantPause(450);}
       return !shopVisible();
     }
     async function execute(action){
@@ -840,7 +844,7 @@
       try{
         if(action==='return'){
           if(!storedRoute)throw Error('尚未錄製去程路線');
-          if(!closeMerchant())throw Error('商人視窗尚未關閉，請先手動關閉，再按「返回原點」。');
+          if(!await closeMerchant())throw Error('商人視窗尚未關閉，請先手動關閉，再按「返回原點」。');
           await replaySegments(storedRoute.segments,true);
           routeStatus('返程重播完成。請核對角色是否回到原點；障礙物與伺服器延遲可能造成偏差。');
           return;
@@ -855,7 +859,7 @@
         }
         const result=await merchantSale();
         if(action==='full' && storedRoute){
-          if(!closeMerchant()){
+          if(!await closeMerchant()){
             routeStatus('販賣流程結束，但商人視窗未能安全關閉。請關閉後按「↩ 返回原點」。');
             return;
           }

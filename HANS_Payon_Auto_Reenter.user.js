@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜長時間巡走＋磁鐵｜返點失敗自動安全停靠＋Lv120後寶箱自動繼續保存
 // @namespace    hunghung-ro-local-tools
-// @version      2.3.9
-// @description  v2.3.9：開場卡片>5開第一批、再累積>=20開第二批；之後每次確認吃到磁鐵再開卡，直到Lv120或卡片0張；Lv120後只開寶箱到需求7000 Z。
+// @version      2.4.0
+// @description  v2.4.0：修正 Lv120 前卡片累積64張卻不開。第一批>5張；後續每達20張立即開至0或Lv120；吃磁鐵也觸發；不依賴小地圖刷新；寶箱7000 Z上限不變。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        none
@@ -42,7 +42,7 @@
   };
   const button=document.createElement('button');
   button.id=UI_ID;button.type='button';
-  button.dataset.hansScriptVersion='2.3.9';
+  button.dataset.hansScriptVersion='2.4.0';
   button.style.cssText='position:fixed;left:8px;bottom:120px;z-index:2147483647;background:#384455;color:#fff;border:1px solid #eee;border-radius:5px;padding:5px 8px;font:12px system-ui,sans-serif;cursor:pointer;max-width:min(360px,80vw);text-align:left';
   button.title='Shift+6 長場巡走；1:55、2:55、5:55、7:55、9:55、11:55、13:55 提前找磁鐵；Boss最後倒數15秒專注追磁鐵，不返點；中途啟動立即接手；Lv120後寶箱按繼續保存。';
   button.setAttribute('aria-keyshortcuts','Shift+6');
@@ -359,11 +359,18 @@
       round.level120Reached=true;state.draining=false;state.magnetReady=false;
       return false;
     }
-    if(state.blocked)return false;
     const picker=document.querySelector('#picker');
     if(picker&&visible(picker))return false;
     const entry=savedCardsEntry();
     if(!entry)return false;
+    // 曾經點擊失敗時，只要後續又累積新卡片或真正撿到磁鐵，
+    // 就解除本場暫停，避免之前一次暫停讓 64 張卡片永遠不會再開。
+    if(state.blocked){
+      if((state.count!==null&&entry.count>state.count)||state.magnetReady){
+        state.blocked=false;state.tries=0;state.lastAt=0;
+        status('開卡重新啟動｜已保存 '+entry.count+' 張');
+      }else return false;
+    }
 
     if(state.draining&&entry.count===0){
       state.draining=false;state.count=0;state.tries=0;state.lastAt=0;
@@ -373,22 +380,22 @@
     }
     if(!state.draining){
       let trigger='';
-      if(state.phase===0 && seconds<=75 && entry.count>5){
-        trigger='第一批：卡片超過5張';
-      }else if(state.phase===0 && seconds>75 && entry.count>=20){
-        // 更新後中途接手，已錯過第一批時可直接開>=20張的大批次。
-        state.phase=1;trigger='中途接手第二批：卡片達20張';
-      }else if(state.phase===1 && entry.count>=20){
-        trigger='第二批：卡片達20張';
-      }else if(state.phase>=2 && state.magnetReady && entry.count>0){
-        // Boss倒數最後15秒優先撿磁鐵，待畫面恢復後才開卡。
+      // 當前人物尚未到 Lv120 時，累積 >=20 張一定要開！
+      // 不論第幾批，也不需要先等下次磁鐵成功拾取。
+      if(state.phase===0&&seconds<=75&&entry.count>5){
+        trigger='第一批：已保存卡片超過5張';
+      }else if(entry.count>=20){
+        if(state.phase===0)state.phase=1; // 開場錯過首批，直接當大批次接手
+        trigger='卡片已累積'+entry.count+'張（達20張）｜立即開卡';
+      }else if(state.phase>=2&&state.magnetReady&&entry.count>0){
+        // 磁鐵確認已拾取且只有少量卡，依原本磁鐵後開卡規則處理。
         if(isFinalBossSweep())return false;
-        trigger='確認吃到磁鐵：開啟累積卡片';
-        state.magnetReady=false;
+        trigger='磁鐵已拾取｜開啟剩餘'+entry.count+'張卡';
       }
       if(!trigger)return false;
+      state.magnetReady=false;
       state.draining=true;state.count=null;state.tries=0;state.lastAt=0;
-      status(trigger+'｜開始連續開卡直到卡片0或Lv120');
+      status(trigger+'｜處理到卡片0張或人物Lv120');
     }
     // 已開始的一批不可因張數降到5或遊戲時間經過而中斷。
     const now=timeNow();
@@ -633,14 +640,15 @@
     if(round.started&&maybeContinueSaving()){move();return;}
     const secs=readGameTime();
     if(secs===null){move();status('等待遊戲計時／地圖');return;}
+    // 即使小地圖座標暫時停止刷新，已啟動場次仍可處理畫面上的已保存卡片。
+    // 達20張時優先開卡，避免因磁鐵尋找／小地圖短暫卡住一直累積到64張。
+    if(round.started&&maybeOpenSavedCards(secs)){move();return;}
     if(!next||!visible(next)||!player||now-lastPlayerAt>950){move();status('等待小地圖座標');return;}
     if(!round.started){
-      // 現在不要求前45秒啟動，5:57開啟也能從6:00磁鐵接續。
+      // 新場次先建立人物/地圖狀態，再立即檢查已保存卡片。
       startRound(secs);
+      if(maybeOpenSavedCards(secs)){move();return;}
     }
-    // 第一批>5張、第二批>=20張，之後在確認吃到磁鐵後再開；
-    // 每批都開至0張或達Lv120才停止，Lv120之後只依價格規則抽寶箱。
-    if(maybeOpenSavedCards(secs)){move();return;}
     // Boss 結束時 HUD 也可能跳回 0:15，不能把它誤認為下一場開局。
     // 正常重進經過主城／選關時會由 outsideRun 重設，這裡不憑時間跳轉重新開場。
     round.prevSeconds=round.seconds;round.seconds=normalizeCombatSeconds(secs);

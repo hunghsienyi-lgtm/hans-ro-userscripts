@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.9.10
-// @description  v0.9.10：沿用原選關與戰利品功能，內建裝備逐件巡檢 V2.1.1；E 穿戴完全略過、非 E 掃描及 Discord 報告、前十保護需手動確認。
+// @version      0.9.11
+// @description  v0.9.11：沿用原選關與戰利品功能，內建裝備逐件巡檢 V2.1.2；E 穿戴完全略過、非 E 掃描及 Discord 報告、前十保護需手動確認。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -28,7 +28,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.9.10';
+  const VERSION = '0.9.11';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -2297,7 +2297,7 @@
 
 })();
 
-// === HANS_INVENTORY_SCANNER_BEGIN v2.1.1 ===
+// === HANS_INVENTORY_SCANNER_BEGIN v2.1.2 ===
 (() => {
   'use strict';
   const ID = 'hans-top10-protect-v200'; // 沿用 ID，避免與舊版面板並存
@@ -2315,7 +2315,7 @@
   let scanMeta = {total:0, eligible:0, ignoredE:0};
   const HOOK_KEY = 'hans-ro-v2-discord-webhook';
   const SCAN_KEY = 'hans-ro-v2-last-full-inventory-scan';
-  const savedHook = () => String(GM_getValue(HOOK_KEY, '') || '').trim();
+  const savedHook = () => String(GM_getValue(HOOK_KEY, '') || GM_getValue('hans_ro_discord_webhook_private', '') || '').trim();
   const validHook = s => /^https:\/\/(?:discord\.com|discordapp\.com)\/api\/webhooks\/\d+\/[A-Za-z0-9_-]+(?:\?.*)?$/.test(s);
   const nowString = () => new Date().toLocaleString('zh-TW', {hour12:false});
   const positionOf = (cells) => {

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.9.16
-// @description  v0.9.16：返回角色後選擇大廳自動點「離線玩」；同步兼容三分鐘短刷結束後的大廳選擇，保留正常戰利品封存與原重進設定。
+// @version      0.9.17
+// @description  v0.9.17：修正六周目改⁵錯認成五周目，正確區分五周目改⁴與六周目改⁵並修復重複點周目。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.9.16';
+  const VERSION = '0.9.17';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -780,8 +780,7 @@
   const namePattern=name=>{
     const raw=norm(name);
     const escaped=[...raw].map(ch=>/[\p{L}\p{N}]/u.test(ch)?ch:'\\'+ch).join('');
-    const flexible=/[・･·‧•∙．]改[45]$/u.test(raw)?
-      escaped.replace(/改[45]$/u,'改(?:4|5)'):escaped;
+    const flexible=escaped;
     return new RegExp('^'+flexible+'$','i');
   };
   // 2026 HANS 遠征周目：一周目原名；二至五周目依次為「・改」「・改²」「・改³」「・改⁴」。
@@ -791,17 +790,18 @@
   const REFORM_MARK=/(?:[・･·‧•∙．]改(?:[2345])?)+$/u;
   function stageNameWorld(name){
     const n=norm(name);
-    if(/[・･·‧•∙．]改(?:4|5)$/u.test(n))return 5;
+    if(/[・･·‧•∙．]改5$/u.test(n))return 6;
+    if(/[・･·‧•∙．]改4$/u.test(n))return 5;
     if(/[・･·‧•∙．]改3$/u.test(n))return 4;
     if(/[・･·‧•∙．]改2$/u.test(n))return 3;
     if(/[・･·‧•∙．]改$/u.test(n))return 2;
     return 1;
   }
   function baseStageName(name){return norm(name).replace(REFORM_MARK,'');}
-  function stageFitsWorld(name,world){return Number(world)===6?stageNameWorld(name)===1:stageNameWorld(name)===Number(world);}
+  function stageFitsWorld(name,world){return stageNameWorld(name)===Number(world);}
   function stageLabelForWorld(base,world){
     const clean=baseStageName(base);
-    return clean+(world===2?'・改':world===3?'・改²':world===4?'・改³':world===5?'・改⁵':'');
+    return clean+(world===2?'・改':world===3?'・改²':world===4?'・改³':world===5?'・改⁴':world===6?'・改⁵':'');
   }
   function canonicalStageName(name,world){
     // 只處理「後綴重複」；未知地圖仍保留從遊戲畫面取得的原名。
@@ -985,6 +985,13 @@
       resetCatalog();catalog.world=tab.world;catalog.worldAt=Date.now();
     }
     // 四、五周目在首次進入時分開掃描全部關卡；未解鎖項目保留，但不會自動出征。
+    // 已有指定目標且右側預覽吻合時，直接出發，不先捲動關卡清單。
+    if(active&&tab.world===chosenWorld()){
+      const target=targetStage(),row=target&&stageTarget();
+      if(target&&row&&hits(target.re).some(h=>rightPreview(h)&&stageFitsWorld(h.t,tab.world))){
+        catalog.running=false;readStageCatalog(tab.world);return;
+      }
+    }
     if([4,5,6].includes(tab.world) && !completedWorldScans.has(tab.world)){
       scanAllStages(tab.world);
       return;
@@ -1063,8 +1070,9 @@
     ['柏伊亞嵐島','16-20'],
     ['斐揚森林','21-25']
   ]){
-    if(Object.values(STAGES).some(x=>x.world===6&&norm(x.name)===norm(name)))continue;
-    STAGES['hans:w6:'+norm(name)]={name,re:namePattern(name),unlocked:null,level,world:6,verified:false};
+    const proper=stageLabelForWorld(name,6);
+    if(Object.values(STAGES).some(x=>x.world===6&&norm(x.name)===norm(proper)))continue;
+    STAGES['hans:w6:'+norm(proper)]={name:proper,re:namePattern(proper),unlocked:null,level,world:6,verified:false};
   }
   // 節慶特殊關卡：2026-11-18 截圖核對五周目有
   // 「聖誕節・改⁴」、「元宵燈會・改⁴」；其餘周目依既有命名規則建立候選。
@@ -1081,6 +1089,14 @@
     }
   }
   seedKnownStageCandidates();
+  // 自動轉換 0.9.14–16 的舊周目目標鍵，不需使用者重新選關。
+  for(const [wKey,oldKey] of Object.entries(worldSelections)){
+    const world=Number(wKey),m=String(oldKey||'').match(/^hans:w\d+:(.+)$/u);
+    if(!WORLD_NAMES[world]||!m)continue;
+    const newKey='hans:w'+world+':'+norm(stageLabelForWorld(m[1],world));
+    if(STAGES[newKey])worldSelections[wKey]=newKey;
+  }
+  redrawStageChoices();
 
   // 控制元件必須等 shortGroup / shortHelp 都宣告後才掛載；原 v0.7.0 會因 TDZ 初始化失敗。
   // 選關與戰利品共用右下原本面板。若主面板尚未生成，重試掛載，不開第二個浮窗。
@@ -1989,12 +2005,11 @@
     const byTabs=tabs?selectedWorldFromTabs(tabs):null;
     // 清單中>=2張同周目的實際關卡名稱，比漸層按鈕背景色可靠。
     // 切換周目仍有 700ms 緩衝，避免沿用上一周目的卡片。
-    // 六周目目前關卡沒有「改」後綴，所以名字會被舊邏輯認作一周目。
-    // 僅當六周目分頁確實選中，且清單呈現原名，才用分頁作為權威證據。
-    const sixthPlain=byTabs===6&&(byStages===1||byStages===null);
-    const world=sixthPlain?6:(byStages!==null?byStages:byTabs);
+    // 「改⁵」代表六周目；周目分頁與清單暫時不同時不猜測。
+    const discrepancy=byTabs!==null&&byStages!==null&&byTabs!==byStages;
+    const world=discrepancy?null:(byStages!==null?byStages:byTabs);
     return {tabs,available:!!tabs,world:world??(tabs?null:1),
-      source:sixthPlain?'sixth-world-selected-tab':byStages!==null?'visible-stage-label':byTabs!==null?'tab':'unknown'};
+      source:discrepancy?'tabs-changing':byStages!==null?'visible-stage-label':byTabs!==null?'tab':'unknown'};
   }
   let worldClickAt=0;
   function ensureWorldTab(){
@@ -2005,9 +2020,13 @@
     }
     if(state.world===wanted){
       if(worldClickAt&&Date.now()-worldClickAt<650){tell('等待周目切換完成');return false;}
+      attempts.world=0;
       return true;
     }
     if(Date.now()-worldClickAt<1100)return false;
+    if(state.world===null&&state.source==='tabs-changing'){
+      tell('等待分頁和關卡清單同步，不重複按周目');return false;
+    }
     if(state.world===null&&(attempts.world||0)>0){
       // 不因先前一次切換未辨識就永久卡死：讓玩家手動切好周目後，
       // 再以「兩個同周目關卡標題」獨立確認；證據不足時仍不誤出征。

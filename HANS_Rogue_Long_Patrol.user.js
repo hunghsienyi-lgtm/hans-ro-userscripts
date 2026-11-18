@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜流氓長場巡走＋磁鐵｜前3分鐘不停＋Lv130後寶箱自動繼續保存
 // @namespace    hunghung-ro-local-tools
-// @version      2.3.4
-// @description  v2.3.4：每場前75秒，已保存卡片>5即自動按開啟(B)，逐張處理直到剩5張；Lv130後寶箱繼續保存與巡走功能不變。
+// @version      2.3.5
+// @description  v2.3.5：進場已保存卡片>5張啟動整批開啟，直到卡片0張才停止；Lv130寶箱保存與磁鐵巡走不變。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        none
@@ -42,7 +42,7 @@
   };
   const button=document.createElement('button');
   button.id=UI_ID;button.type='button';
-  button.dataset.hansScriptVersion='2.3.4';
+  button.dataset.hansScriptVersion='2.3.5';
   button.style.cssText='position:fixed;left:8px;bottom:198px;z-index:2147483647;background:#384455;color:#fff;border:1px solid #eee;border-radius:5px;padding:5px 8px;font:12px system-ui,sans-serif;cursor:pointer;max-width:min(360px,80vw);text-align:left';
   button.title='Shift+8 流氓長場：前3分鐘持續巡走（1:55／2:55照常尋磁鐵），3:00後返點恢復原版站打、磁鐵與安全停靠；Boss最後15秒只找磁鐵、Lv130後寶箱自動繼續保存。';
   button.setAttribute('aria-keyshortcuts','Shift+8');
@@ -59,7 +59,7 @@
     patrolStep:0,patrolUntil:0,target:null,bestGap:Infinity,progressAt:0,
     detours:0,detourKey:'',detourUntil:0,seekAt:0,returnAt:0,returnBest:Infinity,
     returnProgressAt:0,returnDetours:0,returnDetourUntil:0,returnDetourKey:'',
-    magnetObserved:null,blocked:[],level130Reached:false,savePending:null,savedOpen:{count:null,tries:0,lastAt:0,blocked:false},failed:false,
+    magnetObserved:null,blocked:[],level130Reached:false,savePending:null,savedOpen:{count:null,tries:0,lastAt:0,blocked:false,draining:false},failed:false,
     homeFallbacks:0,usingFallbackHome:false,finalPicked:0
   };
   function move(keys=''){
@@ -137,7 +137,7 @@
       bestGap:Infinity,progressAt:0,detours:0,detourKey:'',detourUntil:0,
       seekAt:0,returnAt:0,returnBest:Infinity,returnProgressAt:0,
       returnDetours:0,returnDetourUntil:0,returnDetourKey:'',magnetObserved:null,
-      blocked:[],level130Reached:false,savePending:null,savedOpen:{count:null,tries:0,lastAt:0,blocked:false},failed:false,
+      blocked:[],level130Reached:false,savePending:null,savedOpen:{count:null,tries:0,lastAt:0,blocked:false,draining:false},failed:false,
       homeFallbacks:0,usingFallbackHome:false,finalPicked:0
     });
   }
@@ -346,34 +346,40 @@
     return null;
   }
   function maybeOpenSavedCards(seconds){
-    // 開場 0:00–1:15 才自動打開，避免打Boss時突然因累積卡片被中斷。
-    if(!round.started||!Number.isFinite(seconds)||seconds<0||seconds>75)return false;
+    if(!round.started||!Number.isFinite(seconds)||seconds<0)return false;
     const state=round.savedOpen;
     if(state.blocked)return false;
     const picker=document.querySelector('#picker');
-    if(picker&&visible(picker))return false; // 已在選技，由獨立選技腳本負責
+    if(picker&&visible(picker))return false; // 當前卡片交給獨立選技腳本
     const entry=savedCardsEntry();
     if(!entry)return false;
-    if(entry.count<=5){
-      if(state.count!==null&&state.count>5)status('開局已保存卡片剩'+entry.count+'張｜完成自動開啟');
-      state.count=entry.count;state.tries=0;state.lastAt=0;
+    // 已保存卡片「超過5張」只決定何時啟動整批；不是只開到剩5張。
+    // 前75秒觸發後，超過75秒也會繼續處理，直到確認卡片0張。
+    if(!state.draining){
+      if(seconds>75||entry.count<=5)return false;
+      state.draining=true;
+      status('卡片'+entry.count+'張 > 5｜啟動整批開啟，直到0張');
+    }
+    if(entry.count===0){
+      state.draining=false;state.count=0;state.tries=0;state.lastAt=0;
+      status('已保存卡片0張｜整批全部開完');
       return false;
     }
     const now=timeNow();
     if(state.count!==entry.count){
-      // 只有實際卡片數變更，才視為上一張已成功處理。
+      // 卡片數實際變化後，才解鎖下一張。剩5、4、3、2、1張也要開。
       state.count=entry.count;state.tries=0;state.lastAt=0;
     }
-    if(state.lastAt && now-state.lastAt<1500)return false;
+    if(state.lastAt&&now-state.lastAt<1500)return false;
     if(state.tries>=2){
       state.blocked=true;
-      status('卡片'+entry.count+'張，開啟(B)連試2次仍未減少；停止重試');
+      status('卡片'+entry.count+'張未減少｜停止重試，避免重複點擊');
       return false;
     }
     if(busy())return false;
     state.tries++;state.lastAt=now;
     move();entry.button.click();
-    status('已保存卡片 '+entry.count+' 張 > 5｜開啟(B) 第'+state.tries+'次');
+    status('整批開卡｜尚有'+entry.count+'張｜開啟(B)第'+state.tries+'次');
     return true;
   }
 
@@ -514,8 +520,8 @@
       // 現在不要求前45秒啟動，5:57開啟也能從6:00磁鐵接續。
       startRound(secs);
     }
-    // 新規則：開局已保存卡片超過5張，就先按開啟(B)交給選技模組處理。
-    // 每次只按一次並等待卡片數變更；降至5張停止，不處理寶箱數量。
+    // 進場已保存卡片>5即啟動整批；之後不論剩5、4、3、2、1張都要繼續開到0。
+    // 逐張交由獨立選技模組選卡，寶箱不計入啟動門檻。
     if(maybeOpenSavedCards(secs)){move();return;}
     // Boss 結束時 HUD 也可能跳回 0:15，不能把它誤認為下一場開局。
     // 正常重進經過主城／選關時會由 outsideRun 重設，這裡不憑時間跳轉重新開場。

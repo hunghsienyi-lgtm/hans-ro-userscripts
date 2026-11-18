@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.9.20
-// @description  v0.9.20：離線玩後先從關卡／遠征視窗按「關閉」回主城，驗證視窗消失後自動清背包與商人販賣，完成才重進原關卡。
+// @version      0.9.21
+// @description  v0.9.21：返程加強：關閉商人後多等載入、分段按鍵間隔加長、提供水平微調（預設右1下）；每場清包再重進保留。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -1121,6 +1121,8 @@
 
   // 只在本場按完「離線玩」後觸發，每次成功一次；失敗則鎖住重進避免誤賣。
   const INV_CLEAN_KEY='hans-ro-stage-inventory-clean-enabled-v1';
+  // 返程微調與隱藏巡檢模組共用同一 Tampermonkey 腳本設定。
+  const RETURN_ADJUST_KEY_MAIN='hans-merchant-return-adjust-x-v1';
   const INV_JOB_KEY='hans-ro-stage-inventory-clean-job-v1';
   let invCleanEnabled=true,invCleanerReady=false,invCooldown=0,invJob=null;
   try{invCleanEnabled=localStorage.getItem(INV_CLEAN_KEY)!=='0'}catch{}
@@ -1163,6 +1165,15 @@
     invToggle.style.background=invCleanEnabled?'#176b51':'#596577';
   }
   updateInvToggle();
+  const returnAdjust=document.createElement('select');
+  returnAdjust.title='返程到原點若偏左，可補右1下；若偏右可改左1或不補。每下仍固定200ms。';
+  returnAdjust.id='hans-return-adjust-x';
+  returnAdjust.style.cssText='margin:4px 3px;padding:4px;border-radius:5px;color:#1d3044;background:white;border:1px solid #9abed5;font:11px sans-serif';
+  for(const [number,label] of [[-2,'返程左2'],[-1,'返程左1'],[0,'返程不補'],[1,'返程右1'],[2,'返程右2']]){
+    const option=document.createElement('option');option.value=String(number);option.textContent=label;returnAdjust.append(option);
+  }
+  returnAdjust.value=String(Math.max(-2,Math.min(2,Number(GM_getValue(RETURN_ADJUST_KEY_MAIN,1))||0)));
+  returnAdjust.addEventListener('change',()=>GM_setValue(RETURN_ADJUST_KEY_MAIN,Number(returnAdjust.value)));
   invToggle.addEventListener('click',()=>{
     if(invJob?.status==='running'){tell('清背包執行中，請先關閉「重進」以停止');return;}
     invCleanEnabled=!invCleanEnabled;
@@ -1611,7 +1622,7 @@
       if(mapReadyForZoom())queueZoom();
     }
   });
-  hud.append(btn,worldPicker,picker,shortGroup,shortHelp,invToggle,sellPanel,msg);
+  hud.append(btn,worldPicker,picker,shortGroup,shortHelp,invToggle,returnAdjust,sellPanel,msg);
   mountStageIntoLootPanel();
   const uiElements=[btn,worldPicker,picker,shortToggle,shortGrace,sellToggle,sellPreviewButton];
   if(uiElements.some(el=>!hud.contains(el)) || hud.parentElement?.id!=='roj4-menu'){
@@ -2582,7 +2593,8 @@
       <div class="hp-bar"><button id="hp-route-go">↓9 →13｜去商人</button><button id="hp-route-talk">💬 只開商人對話</button></div>
       <div class="hp-bar"><button id="hp-route-return">←13 ↑9｜返回原點</button><button id="hp-route-stop">停止</button></div>
       <div class="hp-bar"><button id="hp-route-run">▶ 去商人＋賣光＋返程</button><button id="hp-route-sell">商人已開：販賣</button></div>
-      <div class="hp-bar"><label style="flex:1">按鍵方式 <select id="hp-route-keys"><option value="wasd">WASD</option><option value="arrows">方向鍵</option></select></label><span style="align-self:center">固定每下 200ms</span></div>
+      <div class="hp-bar"><label style="flex:1">按鍵方式 <select id="hp-route-keys"><option value="wasd">WASD</option><option value="arrows">方向鍵</option></select></label><span style="align-self:center">每下 200ms</span></div>
+      <div class="hp-bar"><label>返程微調 <select id="hp-route-adjust"><option value="-2">左2下</option><option value="-1">左1下</option><option value="0">不補</option><option value="1">右1下</option><option value="2">右2下</option></select></label><span style="align-self:center">初始右1，可自行調整</span></div>
       <div class="hp-sub" id="hp-route-status">固定路線：↓9 →13｜返程 ←13 ↑9。從原點使用。</div>
       <div class="hp-sub"><b>Discord Webhook（只保存在本機 Tampermonkey）：</b></div>
       <div class="hp-bar"><input id="hp-hook" type="password" placeholder="貼入 Webhook URL，不要貼到聊天" autocomplete="off"><button id="hp-save-hook">儲存</button></div>
@@ -3103,6 +3115,12 @@
     const GRADES=Object.freeze(['普通','優良','稀有','史詩','傳說']);
     const OUTBOUND=Object.freeze([['down',9],['right',13]]);
     const INBOUND=Object.freeze([['left',13],['up',9]]);
+    // 現場回報返程略向左：預設最後往右微移1下，可在設定改為0或左右2下。
+    const RETURN_ADJUST_KEY='hans-merchant-return-adjust-x-v1';
+    const getReturnAdjust=()=>{
+      const stored=Number(GM_getValue(RETURN_ADJUST_KEY,1));
+      return Number.isFinite(stored)?Math.max(-2,Math.min(2,Math.trunc(stored))):1;
+    };
     const KEYMAP=Object.freeze({wasd:{down:['s','KeyS'],right:['d','KeyD'],left:['a','KeyA'],up:['w','KeyW']},
       arrows:{down:['ArrowDown','ArrowDown'],right:['ArrowRight','ArrowRight'],left:['ArrowLeft','ArrowLeft'],up:['ArrowUp','ArrowUp']}});
     const $r=id=>pane.querySelector('#'+id);
@@ -3112,7 +3130,9 @@
     };
     const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     const buttons={go:$r('hp-route-go'),talk:$r('hp-route-talk'),back:$r('hp-route-return'),full:$r('hp-route-run'),
-      sell:$r('hp-route-sell'),stop:$r('hp-route-stop'),keys:$r('hp-route-keys')};
+      sell:$r('hp-route-sell'),stop:$r('hp-route-stop'),keys:$r('hp-route-keys'),adjust:$r('hp-route-adjust')};
+    buttons.adjust.value=String(getReturnAdjust());
+    buttons.adjust.onchange=()=>GM_setValue(RETURN_ADJUST_KEY,Number(buttons.adjust.value));
     let busy=false,stopped=false,pressed=null;
     const isReady=()=>!busy&&!running&&!autoRunning;
     const refresh=()=>{
@@ -3150,10 +3170,16 @@
     const shopOpen=()=>Boolean(panel());
     async function walk(reverse){
       const seq=reverse?INBOUND:OUTBOUND;
-      const tap=200; // 使用者實測：每次方向按鍵固定 200ms
-      const gap=115;
+      const tap=200; // 去回程每一下的按住時間不變
+      const gap=reverse?260:115; // 返程加大鬆鍵間隔，減少遊戲畫面更新時吞按鍵
       let completed=0;
       if(shopOpen())throw Error('商人視窗尚未關閉，不能移動');
+      if(reverse){
+        inform('商人已關閉，等待主城移動恢復（不急著按方向鍵）...');
+        await sleep(1700);
+        activeCheck();
+        if(shopOpen())throw Error('等待後商人視窗仍開啟，停止返程');
+      }
       for(const [direction,count] of seq){
         for(let n=1;n<=count;n++){
           activeCheck();
@@ -3167,7 +3193,21 @@
           await sleep(gap);
         }
       }
-      inform((reverse?'回程':'去程')+'已送出 22 下按鍵，請依角色實際位置核對。');
+      if(reverse){
+        const adjust=getReturnAdjust();
+        if(adjust){
+          const dir=adjust>0?'right':'left',entry=keyEntry(dir);
+          inform('返程水平微調：'+(adjust>0?'右':'左')+Math.abs(adjust)+'下...');
+          for(let j=0;j<Math.abs(adjust);j++){
+            activeCheck();
+            if(shopOpen())throw Error('校正時商人視窗再度開啟，停止');
+            pressed=entry;emit(entry,true);
+            try{await sleep(tap);}finally{release();}
+            await sleep(gap);
+          }
+        }
+        inform('返程已發送左13、上9'+(adjust?'、校正'+(adjust>0?'右':'左')+Math.abs(adjust):'')+'；未取得實際角色座標，請核對站位。');
+      }else inform('去程已送出下9、右13，請依角色實際位置核對。');
     }
     function npcLabel(){
       const candidates=[...document.querySelectorAll('span,div,b,strong,small,button,[role="button"]')]

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜流氓長場巡走＋磁鐵｜前3分鐘不停＋Lv120後寶箱自動繼續保存
 // @namespace    hunghung-ro-local-tools
-// @version      2.4.2
-// @description  v2.4.2：新增即時狀態與下一次磁鐵出發時間回報給左側控制中心；不修改巡走、撿磁鐵、選卡、Lv120及寶箱7000 Z流程。
+// @version      2.4.3
+// @description  v2.4.3：已開啟寶箱三選一必須先完成選卡，即使費用達7000 Z；選完後停止再開下一箱，保留剩餘獎勵。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        none
@@ -42,7 +42,7 @@
   };
   const button=document.createElement('button');
   button.id=UI_ID;button.type='button';
-  button.dataset.hansScriptVersion='2.4.2';
+  button.dataset.hansScriptVersion='2.4.3';
   button.style.cssText='position:fixed;left:8px;bottom:198px;z-index:2147483647;background:#384455;color:#fff;border:1px solid #eee;border-radius:5px;padding:5px 8px;font:12px system-ui,sans-serif;cursor:pointer;max-width:min(360px,80vw);text-align:left';
   button.title='Shift+8 流氓長場：前3分鐘持續巡走（1:55／2:55照常尋磁鐵），3:00後返點恢復原版站打、磁鐵與安全停靠；Boss最後15秒只找磁鐵、Lv120後寶箱自動繼續保存。';
   button.setAttribute('aria-keyshortcuts','Shift+8');
@@ -488,6 +488,20 @@
       panel.querySelector('h1,h2')?.textContent||'');
     return /^(?:寶箱|宝箱|treasurechest)$/i.test(heading);
   }
+  function currentTreasureCharge(){
+    // 已開啟的寶箱視窗顯示「選擇一件裝備 · -7559 Zeny」。
+    // 此金額可能與 HUD 顯示的下一箱需求不同，僅作為停止後續開箱的依據。
+    const panel=document.querySelector('#picker');
+    if(!panel||!visible(panel)||!isTreasurePicker())return null;
+    const texts=[panel.textContent,panel.parentElement?.textContent].filter(Boolean);
+    for(const raw of texts){
+      const m=norm(raw).slice(0,500).match(/選擇一件裝備.{0,24}?[-−](\d[\d,]{0,8})zeny/i);
+      if(!m)continue;
+      const cost=Number(m[1].replace(/,/g,''));
+      if(Number.isFinite(cost)&&cost>=0)return cost;
+    }
+    return null;
+  }
   function continueSaveButton(){
     // 只找精確「繼續保存」，絕不誤點「之後不再翻牌」或一般的「繼續」。
     return [...document.querySelectorAll('button,[role="button"]')].find(btn=>
@@ -534,7 +548,21 @@
     const activePicker=!!panel&&visible(panel);
     if(!activePicker)round.savePending=null;
 
-    // 確認已達成本門檻後，本場不再主動打開任何寶箱。
+    // 已付費、已顯示的寶箱三選一，不可因達到7000 Z 就關閉/跳過。
+    // 先讓巫師／流氓選技完成「本箱」，再停止開啟「下一箱」。
+    if(activePicker&&isTreasurePicker()){
+      const charged=currentTreasureCharge();
+      if(price===null||price>=OPT.treasureCostLimit||
+         (charged!==null&&charged>=OPT.treasureCostLimit)){
+        round.chestOpen.blocked=true;
+        status('最後寶箱已開啟'+(charged===null?'':'（'+charged+' Z）')+
+          '｜先選完本箱，禁止開下一箱');
+      }
+      round.savePending=null;
+      return false;
+    }
+
+    // 金額上限僅判斷「是否繼續開下一箱」，不能中斷已打開的寶箱。
     if(price!==null&&price>=OPT.treasureCostLimit){
       round.chestOpen.blocked=true;
       if(activePicker)return clickContinueSave('寶箱達'+price+' Z，已達7000 Z停止門檻','limit');

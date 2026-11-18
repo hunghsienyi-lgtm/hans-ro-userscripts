@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜左側控制中心｜巡走＋選技（模組獨立）
 // @namespace    hunghung-ro-local-tools
-// @version      1.0.2
-// @description  v1.0.2：修正未偵測到巫師／森林等模組時整列消失；六個模組固定顯示，未載入標示原因，不更動原本獨立腳本。
+// @version      1.0.3
+// @description  v1.0.3：左側每支腳本顯示實際載入版本，不拿GitHub最新版本冒充本機；無版本回報顯示v?，仍保留獨立模組、原快捷鍵與精簡版面。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-start
 // @grant        none
@@ -14,6 +14,7 @@
   'use strict';
   const ROOT_ID='hans-left-control-center-v100';
   const CSS_ID='hans-left-control-center-css-v100';
+  const HUB_VERSION='1.0.3';
   const SAVED_KEY='hans-ro-left-control-center-v101';
   const PREVIOUS_SAVED_KEY='hans-ro-left-control-center-v100';
   const MODULES=Object.freeze([
@@ -64,8 +65,9 @@
     '#'+ROOT_ID+' .hans-hub-row{display:flex;align-items:center;gap:5px;margin-bottom:3px;min-height:27px}'+
     '#'+ROOT_ID+' .hans-hub-name{display:flex;align-items:center;gap:5px;flex:1;'+
     'min-width:0;font-size:11px;color:#d5e7f7}'+
-    '#'+ROOT_ID+' .hans-hub-name strong{font-size:11px;font-weight:600;white-space:nowrap;'+
+    '#'+ROOT_ID+' .hans-hub-name strong{flex:1;min-width:0;font-size:11px;font-weight:600;white-space:nowrap;'+
     'overflow:hidden;text-overflow:ellipsis}'+
+    '#'+ROOT_ID+' .hans-hub-version{font-size:10px;font-variant-numeric:tabular-nums;color:#a5c9ed;white-space:nowrap;flex-shrink:0}'+
     '#'+ROOT_ID+' .hans-hub-shortcut{font-size:9px;color:#9ebbd5;white-space:nowrap;margin-left:auto}'+
     '#'+ROOT_ID+' .hans-hub-proxy{box-sizing:border-box;min-width:44px;max-width:51px;'+
     'height:25px;text-align:center;white-space:nowrap;'+
@@ -113,6 +115,17 @@
     return null;
   }
 
+  // 僅從目前頁面真正載入的原始模組按鈕取版本。
+  // data-hans-script-version 由每支腳本在執行時提供；舊版按鈕有版本文字時才回退解析。
+  // 此處不查 GitHub 版號，避免誤把遠端最新版當成已安裝版本。
+  function runtimeVersion(source){
+    if(!source)return null;
+    const exact=String(source.dataset?.hansScriptVersion||'').trim();
+    if(/^\d+(?:\.\d+){1,3}$/.test(exact))return exact;
+    const label=String(source.textContent||'');
+    const m=label.match(/(?:^|[\s｜:：])v(\d+(?:\.\d+){1,3})(?=$|[^\d])/i);
+    return m?m[1]:null;
+  }
   function updateView(){
     if(!root)return;
     let count=0,active=0;
@@ -131,10 +144,17 @@
           '請在 Tampermonkey 確認原模組已啟用、已安裝且沒有執行錯誤；控制中心不會自行建立功能。';
         proxy.title=message;
         pair.name.title=message;
+        pair.version.textContent='—';
+        pair.version.title='原模組未載入，無法判斷目前版本';
         continue;
       }
       count++;
       const raw=String(source.textContent||'').trim();
+      const liveVersion=runtimeVersion(source);
+      pair.version.textContent=liveVersion?'v'+liveVersion:'v?';
+      pair.version.title=liveVersion?
+        '此版本由目前頁面已執行的原腳本回報：v'+liveVersion:
+        '原腳本未提供可確認的版本。請更新該模組後重新整理；不顯示GitHub版號以免誤判。';
       const green=/^(?:#186442|rgb\(24,\s*100,\s*66\))$/i.test(source.style.backgroundColor||'');
       if(green)active++;
       // 主視窗只顯示開／關；原本完整巡走診斷保留在滑鼠提示，不再撐高面板。
@@ -143,7 +163,7 @@
       if(proxy.textContent!==brief)proxy.textContent=brief;
       const bg=abnormal?'#92541f':green?'#186442':'#384455';
       if(proxy.style.backgroundColor!==bg)proxy.style.backgroundColor=bg;
-      const details=spec.name+'｜'+spec.shortcut+'｜'+(raw||'尚無狀態')+
+      const details=spec.name+'｜'+(liveVersion?'已載入 v'+liveVersion:'版本未確認')+'｜'+spec.shortcut+'｜'+(raw||'尚無狀態')+
         (source.title?'｜'+source.title:'');
       if(proxy.title!==details)proxy.title=details;
       const {name}=pair;
@@ -168,12 +188,16 @@
     moveLabel.title='按住此列可拖曳面板';moveLabel.style.cssText='cursor:move;color:#c7dfef';
     headerText=document.createElement('strong');headerText.textContent='巡走／選技';
     headerText.style.cssText='flex:1;font-size:12px';
+    const hubVersion=document.createElement('span');
+    hubVersion.textContent='v'+HUB_VERSION;
+    hubVersion.title='左側控制中心本身已載入的版本';
+    hubVersion.style.cssText='font-size:10px;color:#a9c9e5;white-space:nowrap;flex-shrink:0';
     summary=document.createElement('span');summary.style.cssText='font-size:10px;color:#a9c9e5;white-space:nowrap';
     foldButton=document.createElement('button');
     foldButton.className='hans-hub-fold';foldButton.type='button';
     foldButton.setAttribute('aria-label','展開或收合 HANS 控制中心');
     foldButton.addEventListener('click',e=>{e.stopPropagation();expanded=!expanded;applyExpanded();save();});
-    bar.append(moveLabel,headerText,summary,foldButton);
+    bar.append(moveLabel,headerText,hubVersion,summary,foldButton);
 
     body=document.createElement('div');body.className='hans-hub-content';
     for(const group of ['選技','巡走／採集']){
@@ -184,10 +208,12 @@
         const row=document.createElement('div');row.className='hans-hub-row';
         const label=document.createElement('div');label.className='hans-hub-name';
         const name=document.createElement('strong');name.textContent=spec.name;
+        const version=document.createElement('span');version.className='hans-hub-version';
+        version.textContent='—';
         const shortcut=document.createElement('span');shortcut.className='hans-hub-shortcut';
         // 不在每一行重複顯示「Shift+...」長字串，以數字精簡顯示；完整快捷鍵仍在提示文字。
         shortcut.textContent=spec.shortcut.replace('Shift+','⇧');
-        label.append(name,shortcut);
+        label.append(name,version,shortcut);
         const proxy=document.createElement('button');proxy.type='button';proxy.className='hans-hub-proxy';
         proxy.textContent='關';
         proxy.addEventListener('click',()=>{
@@ -197,7 +223,7 @@
           source.click();
           setTimeout(updateView,80);
         });
-        row.append(label,proxy);section.append(row);rows.set(spec.id,{row,proxy,name});
+        row.append(label,proxy);section.append(row);rows.set(spec.id,{row,proxy,name,version});
       }
       body.append(section);
     }
@@ -238,7 +264,7 @@
     body.style.display=expanded?'block':'none';
     foldButton.textContent=expanded?'−':'+';
     foldButton.title=expanded?'收合選技／巡走':'展開選技／巡走';
-    if(root)root.style.width=expanded?'232px':'190px';
+    if(root)root.style.width=expanded?'270px':'230px';
     if(root)reposition(parseFloat(root.style.left),parseFloat(root.style.top));
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',mount,{once:true});

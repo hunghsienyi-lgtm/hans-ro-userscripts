@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜逐件裝備巡檢＋GS前十保護＋Discord完整紀錄
 // @namespace    https://ro.hans-webgametw.com/
-// @version      2.1.3
-// @description  V2.1.3：獨立裝備巡檢（不與選關戰利品整合）；E 穿戴裝備不掃描、不動；逐件讀取非E裝備詳情，保護操作另行確認。
+// @version      2.2.0
+// @description  V2.2.0：武器只留法杖，另保留頭上中下、披肩、飾品、鞋子、盾牌、鎧甲各GS前10；E不掃描不操作；先預覽、再確認保護。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -18,6 +18,16 @@
   const ID = 'hans-top10-protect-v200'; // 沿用 ID，避免與舊版面板並存
   if (document.getElementById(ID)) return;
   const LIMIT = 10;
+  const POLICY_VERSION = '2.2.0';
+  const ALLOWED_SLOTS = Object.freeze(['武器','頭部（上）','頭部（中）','頭部（下）','披肩','飾品','鞋子','盾牌','鎧甲']);
+  // 只有名稱明確符合「杖」型且未標記為職業無法使用的武器才能參與武器前十。
+  function isStaffWeapon(r) {
+    if (!r || r.slot !== '武器') return false;
+    const name = String(r.name || '').normalize('NFKC');
+    const staff = /杖/u.test(name) || /\b(?:staff|rod|wand)\b/i.test(name);
+    const unusable = /你的職業無法使用這個道具|your (?:job|class) cannot (?:use|equip)/iu.test(String(r.detailText || ''));
+    return staff && !unusable;
+  }
   const WAIT_MS = 220;
   const pause = ms => new Promise(r => setTimeout(r, ms));
   const textOf = el => (el?.innerText || el?.textContent || '').replace(/\u00a0/g, ' ').trim();
@@ -48,10 +58,10 @@
   const pane = document.createElement('section');
   pane.id = ID;
   pane.innerHTML = `
-    <div class="hp-title"><strong>HANS｜非 E 裝備逐件巡檢 V2.1.3</strong><button id="hp-toggle" title="收合/展開">−</button></div>
+    <div class="hp-title"><strong>HANS｜法師裝備前10巡檢 V2.2.0</strong><button id="hp-toggle" title="收合/展開">−</button></div>
     <div id="hp-body">
-      <div class="hp-sub">主城按 C → 背包 → 全部；僅逐件選取「未穿戴（無 E）」的裝備讀取詳情。E 穿戴品完全跳過，絕不點選。</div>
-      <div class="hp-sub">按「掃描＋傳 DC」會記錄全部非 E 裝備，E 只計入跳過件數。成功掃完才傳；每部位非 E 前10保護必須另外按確認。</div>
+      <div class="hp-sub">主城按 C → 背包 → 全部；E 穿戴品完全跳過。只保留法杖、頭上/中/下、披肩、飾品、鞋子、盾牌、衣服（鎧甲）。</div>
+      <div class="hp-sub">先逐件掃描所有非 E 裝備並預覽：只有「法杖」進武器GS前10，其他八個部位各留GS前10；非杖武器歸排除。取消保護／保護需另行按確認，絕不丟棄或販賣。</div>
       <div class="hp-bar"><button id="hp-scan">① 掃描非 E 裝備</button><button id="hp-scan-dc">① 掃描非 E＋傳 DC</button></div>
       <div class="hp-bar"><button id="hp-apply" disabled>② 確認前10保護</button><button id="hp-stop" disabled>停止</button></div>
       <div class="hp-sub"><b>Discord Webhook（只保存在本機 Tampermonkey）：</b></div>
@@ -228,41 +238,50 @@
   }
 
   function buildPlan() {
-    const groups = new Map();
+    const groups = new Map(ALLOWED_SLOTS.map(slot => [slot, []]));
+    const output = [];
     for (const r of records) {
-      if (r.equipped) continue; // 防止 E 進入前十名計算
-      if (!groups.has(r.slot)) groups.set(r.slot, []);
+      if (r.equipped) continue; // E 不掃描、不排名、不操作
+      const allowed = ALLOWED_SLOTS.includes(r.slot);
+      const staff = isStaffWeapon(r);
+      r.weaponKind = r.slot === '武器' ? (staff ? '法杖' : '非杖武器') : '';
+      r.groupLabel = r.slot === '武器' ? (staff ? '武器／法杖' : '武器／非杖（排除）') : r.slot;
+      r.reason = !allowed ? '不在指定保留部位' : r.slot === '武器' && !staff ? '非杖武器，不列入保留排名' : '';
+      r.rank = null;
+      r.shouldProtect = false;
+      r.action = r.protected ? '取消保護' : '保持';
+      if (r.reason) { output.push(r); continue; }
       groups.get(r.slot).push(r);
     }
-    const output = [];
     for (const [slot, arr] of groups) {
-      arr.sort((a,b)=> b.gs - a.gs || Number(b.equipped) - Number(a.equipped) ||
-        Number(b.protected) - Number(a.protected) || a.order - b.order);
-      arr.forEach((r,i)=>{
-        r.rank = i + 1;
+      arr.sort((a,b) => b.gs-a.gs || Number(b.protected)-Number(a.protected) || a.order-b.order);
+      arr.forEach((r,i) => {
+        r.rank = i+1;
         r.shouldProtect = i < LIMIT;
         r.action = r.shouldProtect === r.protected ? '保持' : r.shouldProtect ? '保護' : '取消保護';
         output.push(r);
       });
     }
-    return output;
+    return output.sort((a,b)=>a.index-b.index);
   }
-
   function renderReport() {
     if (!records.length) { $('hp-report').innerHTML=''; return; }
-    const bySlot = [...new Set(plan.map(x=>x.slot))];
-    let html = `<div><b>非 E 已掃 ${records.length}/${scanMeta.eligible} 件</b>｜E 跳過 ${scanMeta.ignoredE} 件｜背包共 ${scanMeta.total} 件｜待保護 ${plan.filter(x=>x.action==='保護').length} 件｜待取消 ${plan.filter(x=>x.action==='取消保護').length} 件</div>`;
-    html += `<div class="hp-sub">${scanSnapshot?.complete ? '✓ 所有非 E UID 已逐件確認；E 沒有點選、沒有讀取詳情' : '非 E 裝備尚未全數掃描，禁止執行保護'}</div>`;
-    if (issues.length) html += `<div class="hp-warn">掃描未完整，禁止執行：<br>${issues.map(s=>esc(s)).join('<br>')}</div>`;
-    for (const slot of bySlot) {
-      const arr = plan.filter(r=>r.slot===slot);
-      html += `<details><summary><b>${esc(slot)}</b>（${arr.length} 件；保護 ${arr.filter(x=>x.action==='保護').length}／取消 ${arr.filter(x=>x.action==='取消保護').length}）</summary><table><thead><tr><th>名次</th><th>背包格</th><th>GS</th><th>E</th><th>操作</th></tr></thead><tbody>`;
-      for (const r of arr) html += `<tr title="${esc(r.heading||r.name)}"><td>${r.rank}</td><td>#${r.index}</td><td>${r.gs}</td><td>${r.equipped?'E':''}</td><td>${esc(r.action)}</td></tr>`;
+    const nonStaff = plan.filter(r => r.slot==='武器' && r.reason).length;
+    const staffCount = plan.filter(r => r.slot==='武器' && !r.reason).length;
+    const order=[...ALLOWED_SLOTS.map(x=>x==='武器'?'武器／法杖':x),'武器／非杖（排除）'];
+    const keys=order.filter(x=>plan.some(r=>r.groupLabel===x));
+    let html = `<div><b>非 E 已掃 ${records.length}/${scanMeta.eligible} 件</b>｜E 跳過 ${scanMeta.ignoredE} 件｜背包共 ${scanMeta.total} 件</div>`;
+    html += `<div><b>法杖 ${staffCount} 件</b>｜非杖武器排除 ${nonStaff} 件｜待保護 ${plan.filter(x=>x.action==='保護').length} 件｜待取消 ${plan.filter(x=>x.action==='取消保護').length} 件</div>`;
+    html += `<div class="hp-sub">${scanSnapshot?.complete ? '✓ 每件非 E 均已讀取；E 完全沒選取。以下為預覽，尚未更動保護。' : '非 E 尚未完整掃描，禁止執行保護。'}</div>`;
+    if (issues.length) html += `<div class="hp-warn">掃描未完整，禁止執行：<br>${issues.map(x=>esc(x)).join('<br>')}</div>`;
+    for (const key of keys) {
+      const arr=plan.filter(r=>r.groupLabel===key).sort((a,b)=>(a.rank??999999)-(b.rank??999999)||b.gs-a.gs);
+      html += `<details><summary><b>${esc(key)}</b>（${arr.length} 件｜保護 ${arr.filter(x=>x.action==='保護').length}／取消 ${arr.filter(x=>x.action==='取消保護').length}）</summary><table><thead><tr><th>名次</th><th>背包格</th><th>名稱</th><th>GS</th><th>操作</th></tr></thead><tbody>`;
+      for (const r of arr) html += `<tr title="${esc(r.reason || r.heading || r.name)}"><td>${r.rank ?? '排除'}</td><td>#${r.index}</td><td>${esc(r.name)}</td><td>${r.gs}</td><td>${esc(r.action)}</td></tr>`;
       html += '</tbody></table></details>';
     }
     $('hp-report').innerHTML=html;
   }
-
   async function scan(sendAfter=false) {
     if (running) return;
     running=true; aborted=false; records=[]; plan=[]; issues=[]; scannedAt=0; scanSnapshot=null;
@@ -296,7 +315,7 @@
       if(records.length!==uids.length) issues.push(`只成功讀取 ${records.length}/${uids.length} 件非 E 裝備，不能安全排名。`);
       plan=buildPlan();
       if(!issues.length) scannedAt=Date.now();
-      scanSnapshot={version:'2.1.0',capturedAt:new Date().toISOString(),gameUrl:location.origin,
+      scanSnapshot={version:POLICY_VERSION,policy:'非 E：武器僅法杖；其餘指定八部位每部位 GS 前10；E完全排除；其餘取消保護',capturedAt:new Date().toISOString(),gameUrl:location.origin,
         expectedCount:expected,discoveredCount:baseline.total,eligibleCount:uids.length,
         skippedEquippedCount:baseline.ignoredE.length,skippedEquippedUIDs:[...baseline.ignoredE],
         scannedCount:records.length,
@@ -320,15 +339,16 @@
   }
 
   const discordTextOf = (r) => {
-    const header=`【背包第 ${r.index} 格／第${r.row}列第${r.col}欄】${r.slot}｜GS ${r.gs}｜Tier ${r.tier}｜非 E（未穿戴）｜${r.protected?'已保護':'未保護'}｜該部位第${r.rank||'?'}名`;
+    const header=`【背包第 ${r.index} 格／第${r.row}列第${r.col}欄】${r.groupLabel || r.slot}｜GS ${r.gs}｜Tier ${r.tier}｜非 E｜${r.protected?'已保護':'未保護'}｜名次 ${r.rank ?? '排除'}｜預覽：${r.action}${r.reason?'｜'+r.reason:''}`;
     return header+'\nUID: '+r.uid+'\n圖示: '+(r.icon||'未讀取')+'\n其他圖片/卡片: '+JSON.stringify(r.cardImages||[])+'\n'+(r.detailText||'無詳情').trim();
   };
   function chunksOfReport(snapshot){
-    const groups=new Map();for(const r of snapshot.items){(groups.get(r.slot)||groups.set(r.slot,[]).get(r.slot)).push(r)}
+    const groups=new Map();for(const r of snapshot.items){const key=r.groupLabel || r.slot;(groups.get(key)||groups.set(key,[]).get(key)).push(r)}
     const date=nowString();
     const summary=[`🔍 HANS RO 非 E 裝備完整巡檢｜${date}`,
       `背包共 ${snapshot.expectedCount} 件｜E 穿戴已跳過 ${snapshot.skippedEquippedCount} 件（完全未點選或修改）`,
       `非 E 逐件掃描 ${snapshot.scannedCount}/${snapshot.eligibleCount} 件｜非 E 保護中 ${snapshot.items.filter(x=>x.protected).length}`,
+      `保留規則：武器只留法杖，其他指定八部位各保留 GS 前10。非杖武器 ${snapshot.items.filter(x=>x.slot==='武器' && x.reason).length} 件不納入排名；先預覽再確認。`,
       `只有非 E 裝備逐件點開右側詳情。這是「目前非 E 背包快照」，不是掉落歷史。`,
       ...[...groups].map(([slot,a])=>`${slot}: ${a.length} 件｜最高 GS ${Math.max(...a.map(x=>x.gs))}`),
       `共 ${snapshot.items.length} 件，後續訊息逐件含背包位置／UID／屬性／卡片資訊。`].join('\n');
@@ -403,11 +423,11 @@
     }
   }
   async function apply() {
-    if (running || !scannedAt || issues.length || !scanSnapshot?.complete) return;
+    if (running || !scannedAt || issues.length || !scanSnapshot?.complete || scanSnapshot.version !== POLICY_VERSION) return;
     const tasks = [...plan.filter(x=>x.action==='保護'),...plan.filter(x=>x.action==='取消保護')];
     if(tasks.some(x=>x.equipped)) {status('安全阻擋：規劃清單混入 E 裝備，請重新掃描。');return;}
     if (!tasks.length) {status('所有非 E 裝備已符合保護規則，不需要修改。');return;}
-    if (!confirm(`HANS 裝備保護管理：\n每部位非 E 裝備前 ${LIMIT} 名；E 跳過、不計入排名、完全不動。\n將「保護」${tasks.filter(x=>x.action==='保護').length} 件、「取消保護」${tasks.filter(x=>x.action==='取消保護').length} 件。\n\n這會真正修改裝備保護狀態，但不會販賣或丟棄。是否執行？`))return;
+    if (!confirm(`HANS 裝備保護管理：\nE 完全不動。只保留法杖、頭上中下、披肩、飾品、鞋子、盾牌、鎧甲各 GS 前 ${LIMIT} 件。\n非杖武器：不留（已保護的會取消保護）。\n將「保護」${tasks.filter(x=>x.action==='保護').length} 件、「取消保護」${tasks.filter(x=>x.action==='取消保護').length} 件。\n\n只調整保護狀態，不販賣、不丟棄。確定執行？`))return;
     running=true;aborted=false;controls();
     let completed=0;
     const oldSelected = inv()?.querySelector('.item-cell.sel');
@@ -429,7 +449,7 @@
         if(equipped(itemCell(task.uid))) throw Error('安全阻擋：目標已穿戴 E，立即停止。');
         await select(task.uid);
         const cur = readSelected(task.uid);
-        if (cur.error || cur.equipped || cur.gs !== task.gs || cur.slot !== task.slot || cur.tier !== task.tier)
+        if (cur.error || cur.equipped || cur.gs !== task.gs || cur.slot !== task.slot || cur.tier !== task.tier || cur.name !== task.name || isStaffWeapon(cur) !== isStaffWeapon(task))
           throw Error('裝備狀態、分數或部位變更，已停止（' + task.slot + ' GS ' + task.gs + '）。');
         if(cur.protected === task.shouldProtect){completed++;continue;}
         const panel=detailPanel();
@@ -473,13 +493,13 @@
     document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);
   }
   function exportCSV(){
-    const headers=['掃描時間','背包第幾格','列','欄','裝備部位','該部位GS排名','裝備名稱','GS','Tier','E穿戴中','已保護','前十目標保護','預覽操作','UID','裝備圖示','強化/精煉','屬性','卡片/卡槽','卡片與其他圖片資訊','完整詳情'];
-    const rows=records.map(r=>[r.scannedAt,r.index,r.row,r.col,r.slot,r.rank,r.name,r.gs,r.tier,r.equipped?'是':'否',r.protected?'是':'否',r.shouldProtect?'是':'否',r.action,r.uid,r.icon,r.refine,(r.attributes||[]).join('；'),(r.cardLines||[]).join('；'),JSON.stringify(r.cardImages||[]),r.detailText]);
+    const headers=['掃描時間','背包第幾格','列','欄','裝備部位','法師保留分類','排除原因','該部位GS排名','裝備名稱','GS','Tier','E穿戴中','已保護','前十目標保護','預覽操作','UID','裝備圖示','強化/精煉','屬性','卡片/卡槽','卡片與其他圖片資訊','完整詳情'];
+    const rows=records.map(r=>[r.scannedAt,r.index,r.row,r.col,r.slot,r.groupLabel||r.slot,r.reason||'',r.rank??'',r.name,r.gs,r.tier,r.equipped?'是':'否',r.protected?'是':'否',r.shouldProtect?'是':'否',r.action,r.uid,r.icon,r.refine,(r.attributes||[]).join('；'),(r.cardLines||[]).join('；'),JSON.stringify(r.cardImages||[]),r.detailText]);
     const csv='\ufeff'+[headers,...rows].map(row=>row.map(csvCell).join(',')).join('\r\n');
     download('HANS_RO_全背包逐件裝備紀錄_'+new Date().toISOString().slice(0,10)+'.csv',csv,'text/csv;charset=utf-8');
   }
   function exportJSON(){
-    const data=scanSnapshot||{version:'2.1.0',complete:false,expectedCount:scanMeta.total,eligibleCount:scanMeta.eligible,skippedEquippedCount:scanMeta.ignoredE,issues,items:records};
+    const data=scanSnapshot||{version:POLICY_VERSION,complete:false,expectedCount:scanMeta.total,eligibleCount:scanMeta.eligible,skippedEquippedCount:scanMeta.ignoredE,issues,items:records};
     download('HANS_RO_全背包逐件裝備紀錄_'+new Date().toISOString().slice(0,10)+'.json',JSON.stringify(data,null,2),'application/json;charset=utf-8');
   }
   $('hp-scan').onclick=()=>scan(false);

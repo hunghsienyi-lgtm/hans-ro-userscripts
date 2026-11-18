@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 盜賊→流氓｜六核心自動選技＋優先放逐＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.1.9
-// @description  流氓v1.1.9：刀扇看到就選，技能未5/5不放逐；技能5/5後放逐刀扇以外選項。增加常駐啟動狀態和重複腳本警告，方便排除沒有執行的問題。
+// @version      1.2.0
+// @description  流氓v1.2：刀扇有就點、技能未5/5不放逐；強化選卡標題與每張卡的放逐按鈕辨識，顯示操作原因。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
 // @run-at       document-idle
@@ -17,14 +17,14 @@
     // 若舊版仍在執行，它會先註冊相同的畫面 ID 而讓新版直接退出。
     // 顯示原因，不要靜默失敗或在同一頁偷偷建立兩個同時選卡的控制器。
     const warning=document.createElement('div');
-    warning.id='hans-rogue-duplicate-warning-119';
-    warning.textContent='流氓 v1.1.9 未接管：偵測到重複／舊版流氓腳本。請到 Tampermonkey 停用其他流氓版本後重新整理。';
+    warning.id='hans-rogue-duplicate-warning-120';
+    warning.textContent='流氓 v1.2.0 未接管：偵測到重複／舊版流氓腳本。請到 Tampermonkey 停用其他流氓版本後重新整理。';
     warning.style.cssText='position:fixed;top:8px;right:8px;z-index:2147483647;background:#743b25;color:white;font:12px system-ui;padding:10px;max-width:330px;border:1px solid white;border-radius:6px';
     (document.body||document.documentElement).append(warning);
     return;
   }
   const label = '流氓';
-  const version = '1.1.9';
+  const version = '1.2.0';
   const potion = [/傷害藥水|damage potion|potion of damage/i, /範圍藥水|area potion|potion of area/i];
   const normalize = s => String(s||'').normalize('NFKC').replace(/\s+/g,' ').trim();
   const read = (el,selector) => normalize(el?.querySelector(selector)?.textContent||'');
@@ -314,12 +314,17 @@
   let exileState={pending:null,done:0,blocked:false};
   function resetExile(){exileState={pending:null,done:0,blocked:false};}
   function banishBtn(card){
-    const slot=card.closest('.pk-slot');
-    if(!slot||slot.classList.contains('asking'))return null;
-    return [...slot.querySelectorAll('button.pk-act,button,[role="button"]')].find(btn=>
-      btn!==card&&!btn.contains(card)&&shown(btn)&&
+    // 從卡片向外找單卡容器；不依賴 .pk-slot 必定存在。
+    const isTarget=btn=>btn!==card&&!btn.contains(card)&&shown(btn)&&
       !String(btn.dataset?.act||'').startsWith('bar:')&&
-      banishPattern.test(actText(btn)+' '+String(btn.dataset?.act||'')))||null;
+      banishPattern.test(actText(btn)+' '+String(btn.dataset?.act||''));
+    for(let p=card.parentElement,step=0;p&&step<7;p=p.parentElement,step++){
+      if(p.classList.contains('asking')||p.closest('.asking'))return null;
+      if(p.querySelectorAll('.pk-card').length>1)break;
+      const found=[...p.querySelectorAll('button,[role="button"],.pk-act')].find(isTarget);
+      if(found)return found;
+    }
+    return null;
   }
   function rerollAllBtn(panel){
     const buttons=[...panel.querySelectorAll('#pk-bar button,.pk-acts button,.pk-actions button,#picker button')];
@@ -352,6 +357,7 @@
   function tryBanish(cards,info,panel){
     if(!info.explicitFiveOfFive){resetExile();return false;}
     const rem=remainingExiles(panel),signature=exileSignature(cards,panel);
+    const found=cards.filter(c=>coreOf(c)?.id!=='knife'&&banishBtn(c)).length;
     if(exileState.pending){
       const old=exileState.pending;
       const success=(rem!==null&&old.count!==null&&rem<old.count)||
@@ -359,28 +365,28 @@
       if(success){
         exileState.done++;exileState.pending=null;
         diagnostic('已確認放逐 '+exileState.done+' 次，剩餘 '+(rem??'未知'));
-      }else if(performance.now()-old.at>1700){
+      }else if(performance.now()-old.at>2500){
         exileState.blocked=true;exileState.pending=null;
-        diagnostic('已按放逐但未確認扣次數｜停止選卡，不能假裝已用完');
+        diagnostic('放逐未確認成功｜剩'+(rem??'?')+'｜候選'+cards.length+'｜可放逐'+found+'；停止後續操作');
       }else{
         diagnostic('等待放逐扣次數｜'+(rem??'?')+' 次');
         return true;
       }
     }
     if(exileState.blocked)return true;
-    if(rem===0){diagnostic('放逐次數歸零，繼續選技');return false;}
+    if(rem===0){diagnostic('技能5/5｜放逐剩0｜改選技能');return false;}
     if(rem===null&&exileState.done>=3){diagnostic('已確認放逐三次，繼續選技');return false;}
     // 不比較強度：左到右第一張不是刀扇的卡直接放逐。
     const targets=cards.filter(card=>!core[0].re.test(cardName(card))&&coreOf(card)?.id!=='knife');
     if(!targets.length){diagnostic('技能已5/5，但畫面全是刀扇，禁止放逐刀扇');return true;}
     const picked=targets.map(card=>({card,btn:banishBtn(card)})).find(x=>x.btn);
     if(!picked){
-      diagnostic('滿5/5，還有 '+(rem??'?')+' 次放逐；找不到非刀扇卡的放逐按鈕');
+      diagnostic('技能5/5｜放逐剩'+(rem??'?')+'｜候選'+cards.length+'｜可放逐按鈕0；請截此狀態');
       return true;
     }
     exileState.pending={at:performance.now(),count:rem,signature};
     nextActionAt=performance.now()+650;
-    diagnostic('滿5/5：放逐 '+cardName(picked.card)+'｜剩 '+(rem??'?')+' 次');
+    diagnostic('技能5/5｜執行放逐 '+cardName(picked.card)+'｜剩'+(rem??'?')+'｜可放逐'+found);
     picked.btn.click();return true;
   }
   function tryReroll(panel,why){
@@ -425,8 +431,14 @@
     const title=normalize(read(panel,'#pk-title')||document.querySelector('#pk-title')?.textContent||read(panel,'.pk-title')||read(panel,'h1'));
     const chest=/^(?:寶箱|寶箱選擇|treasure\s*chest)\s*!?$/i.test(title);
     const level=/^(?:升\s*級|強化\s*技能|level\s*up|upgrade\s*(?:a\s*)?skill)\s*!?$/i.test(title);
-    const byLayout=!chest&&!level&&shown(document.querySelector('#lu-sockets'))&&!!panel.querySelector('button.pk-card');
-    if(!chest&&!level&&!byLayout){diagnostic('未知選卡標題：'+title.slice(0,70));return;}
+    // 標題可能是「技能選擇」而非升級；同時核對選卡與技能欄。
+    const hasSkills=!!(panel.querySelector('#lu-sockets')||document.querySelector('#lu-sockets'));
+    const hasFiveLabel=/(?:技能|skills?)\s*\d+\s*\/\s*\d+/i.test(normalize(panel.textContent||''));
+    const byLayout=!chest&&!!panel.querySelector('.pk-card')&&(hasSkills||hasFiveLabel);
+    if(!chest&&!level&&!byLayout){
+      diagnostic('選卡標題未辨識：'+title.slice(0,35)+'｜技能欄'+(hasSkills?'有':'無')+'｜5/5文字'+(hasFiveLabel?'有':'無'));
+      return;
+    }
     const asking=panel.querySelector('.pk-slot.asking');
     if(asking){
       const card=asking.querySelector('button.pk-card');
@@ -441,7 +453,7 @@
     }
     if(performance.now()<nextActionAt)return;
     const cards=[...new Set(panel.querySelectorAll('button.pk-card,[role="button"].pk-card,.pk-card'))].filter(shown);
-    if(!cards.length){diagnostic('選卡畫面開啟，但找不到任何 .pk-card');return;}
+    if(!cards.length){diagnostic('選卡畫面開啟，但找不到 .pk-card｜卡片結構可能有變更');return;}
     const hand=cards.map(c=>cardName(c)+'|'+cardText(c)+'|'+isNew(c)).join('||');
     if(hand!==tick.prevHand){
       // 上一輪點選後換了一手，代表選取已完成；避免沒二次確認時遺漏普攻。
@@ -460,7 +472,7 @@
     const info=slotInfo(panel);
     // 例：遊戲顯示「技能 5/5」卻仍缺刀扇；這一局不可用放逐補救已佔用的技能欄。
     if(info.full && !info.ready){
-      diagnostic('技能欄滿格但沒有讀到「技能5/5」｜暫停選卡，避免誤動作');
+      diagnostic('技能格已滿，但沒讀到技能5/5文字｜安全停止，避免誤按');
       return;
     }
     if(info.ready){
@@ -498,7 +510,7 @@
     statusVisible(on);
     if(button){button.textContent=label+'選技：'+(on?'開':'關')+' v'+version;
       button.style.background=on?'#186442':'#384455';}
-    diagnostic(on?'已啟動｜技能5/5後刀扇有就點，沒有刀扇才放逐':'尚未啟動｜按 Shift+2 或左側流氓選技按鈕啟用');
+    diagnostic(on?'已啟動 v1.2.0｜等待技能選卡或5/5判斷':'尚未啟動 v1.2.0｜按 Shift+2 或左側流氓選技按鈕啟用');
   }
   function mount(){
     if(!document.body){setTimeout(mount,100);return;}

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜逐件裝備巡檢＋GS前十保護＋Discord完整紀錄
 // @namespace    https://ro.hans-webgametw.com/
-// @version      2.6.1
-// @description  V2.6.1：複掃驗證後先按「回到普隆德拉」並核對回城，才下9右13去商人；保留免確認自動販賣及返程。
+// @version      2.6.2
+// @description  V2.6.2：第二輪掃描保護完成後點「回到普隆德拉」，驗證回到主城才移動到商人；修正回城按鈕文字比對。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -69,7 +69,7 @@
   const pane = document.createElement('section');
   pane.id = ID;
   pane.innerHTML = `
-    <div class="hp-title"><strong title="按住這個藍色標題列就能拖曳">HANS｜一鍵清背包 V2.6.1</strong><button id="hp-toggle" title="縮小／展開">−</button></div>
+    <div class="hp-title"><strong title="按住這個藍色標題列就能拖曳">HANS｜一鍵清背包 V2.6.2</strong><button id="hp-toggle" title="縮小／展開">−</button></div>
     <div id="hp-body">
       <div class="hp-sub">主城按 C → 背包 → 全部；E 穿戴完全跳過。只保留傳說品質：法杖、頭上中下、披肩、飾品、鞋子、盾牌、衣服（鎧甲）。</div>
       <div class="hp-sub">一鍵流程：非 E 掃描→自動保護傳說前十→複掃驗證→按「回到普隆德拉」→商人五品質販賣→返程與DC摘要；免確認，異常停止。</div>
@@ -913,7 +913,7 @@
   function findPronteraReturn(){
     const candidates=[...document.querySelectorAll('button,[role="button"],input[type="button"]')]
       .filter(el=>!pane.contains(el)&&isVisible(el)&&
-        norm(el.value||textOf(el)).replace(/\\s+/g,'')==='回到普隆德拉'&&!el.disabled);
+        norm(el.value||textOf(el)).replace(/\s+/g,'')==='回到普隆德拉'&&!el.disabled);
     if(candidates.length>1)throw Error('找到多個「回到普隆德拉」按鈕，已停止，避免誤點。');
     return candidates[0]||null;
   }

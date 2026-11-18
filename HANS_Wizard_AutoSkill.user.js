@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 二轉巫師｜五核心自動選技＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.25
-// @description  v1.25：人物達Lv120後不自動選升級技能；寶箱僅在下一箱需求低於7000 Z時抽取，金額未讀到或超標則停止。其他選卡規則不變。
+// @version      1.26
+// @description  v1.26：已開啟寶箱三選一必須先完成選卡，即使費用達7000 Z；選完後停止再開下一箱，保留剩餘獎勵。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
 // @run-at       document-idle
@@ -85,7 +85,7 @@
     return {amount:Math.max(target,impact),kind:impact>target?'衝擊':'目標'};
   }
 
-  // v1.25：二轉五核心；暴風雪 > 霜凍之術 > 三箭；「冰凍術」不是「霜凍之術」。
+  // v1.26：二轉五核心；暴風雪 > 霜凍之術 > 三箭；「冰凍術」不是「霜凍之術」。
   const coreSkills = [
     {id:'storm', label:'暴風雪', name:/暴風雪|storm\s*gust|\bblizzard\b/i,
       slot:/blizzard|storm[-_]?gust|(?:^|[_.-])storm(?:gust)?$|^stormgust$|^wizardstorm$/i},
@@ -139,7 +139,7 @@
   }
   function scoreSkill(card,info){
     const core=coreOf(card), newSkill=isNew(card), text=read(card,'.pk-lines').normalize('NFKC');
-    // v1.25：先拿缺少的五大核心技能；五核心齊全後才把 +目標／+衝擊列為第一優先。
+    // v1.26：先拿缺少的五大核心技能；五核心齊全後才把 +目標／+衝擊列為第一優先。
     // 即使卡片上同時寫有 +目標，只要它屬於「新技能」，仍按補技能處理。
     if(newSkill && info.full) return {score:-Infinity,reason:'技能格已滿'};
     if(newSkill){
@@ -291,7 +291,7 @@
     if (message===lastDiagnostic) return;
     lastDiagnostic=message;
     if (button) button.title='Shift+1 切換；目前：'+message;
-    console.info('[HANS 巫師 v1.25]',message);
+    console.info('[HANS 巫師 v1.26]',message);
   }
   let nextRerollAt=0, pending=null, lastChoiceAt=0, lastChoiceKey='',choiceTries=0;
   const attempts=new WeakMap();
@@ -356,15 +356,12 @@
       diagnostic('Lv120已到｜不再選升級技能，改由巡走模組保存');
       return true;
     }
+    // 只在已經開啟的寶箱三選一中呼叫此函式：
+    // 已出現在螢幕的寶箱必須先選完，不能因 HUD 的下一箱成本>=7000 或金額未讀到而卡住。
+    // 開下一箱的金額門檻由長場巡走統一執行。
     const price=liveNextChestCost();
-    if(price===null){
-      diagnostic('Lv120後寶箱需求金額未辨識｜停止選卡避免超額');
-      return true;
-    }
-    if(price>=7000){
-      diagnostic('下一箱需求'+price+' Z已達7000門檻｜停止開寶箱');
-      return true;
-    }
+    if(price===null||price>=7000)
+      diagnostic('本箱已經打開｜先完成這一箱選卡；下一箱不再開啟');
     return false;
   }
 
@@ -455,12 +452,12 @@
   }
   const safeTick=()=>{try{tick();}catch(error){
     diagnostic('腳本錯誤：'+String(error?.message||error));
-    console.error('[HANS 巫師 v1.25]',error);
+    console.error('[HANS 巫師 v1.26]',error);
   }};
   function enable(on){
     clearInterval(timer);
     timer=on?setInterval(safeTick,400):null;
-    button.textContent=label+'選技：'+(on?'開':'關')+' v1.25';
+    button.textContent=label+'選技：'+(on?'開':'關')+' v1.26';
     button.style.background=on?'#186442':'#384455';
     diagnostic(on?'已開啟，等待選卡畫面':'已關閉；按鈕或 Shift+1 開啟');
   }
@@ -469,7 +466,7 @@
     if(document.getElementById('hans-mage-autoskill-v123'))return;
     button=document.createElement('button');button.type='button';
     button.id='hans-mage-autoskill-v123';
-    button.dataset.hansScriptVersion='1.25';
+    button.dataset.hansScriptVersion='1.26';
     button.style.cssText='position:fixed;left:8px;bottom:84px;z-index:2147483647;color:white;border:1px solid white;border-radius:5px;padding:5px 8px;cursor:pointer';
     button.onclick=()=>{
       const on=timer===null;

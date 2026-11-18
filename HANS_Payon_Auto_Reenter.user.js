@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜長時間巡走＋磁鐵｜返點失敗自動安全停靠＋Lv120後寶箱自動繼續保存
 // @namespace    hunghung-ro-local-tools
-// @version      2.3.7
-// @description  2.3.7：人物Lv120後停止開技能卡，改抽已保存寶箱；下一箱需求低於7000 Z才繼續，>=7000 Z停止並繼續保存。原磁鐵巡走不變。
+// @version      2.3.8
+// @description  v2.3.8：Lv120後只抽已保存寶箱；下一箱需求達7000 Z即停止。改從「寶箱 N」分頁直接切換，避免底部(B)被遮住。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        none
@@ -42,7 +42,7 @@
   };
   const button=document.createElement('button');
   button.id=UI_ID;button.type='button';
-  button.dataset.hansScriptVersion='2.3.7';
+  button.dataset.hansScriptVersion='2.3.8';
   button.style.cssText='position:fixed;left:8px;bottom:120px;z-index:2147483647;background:#384455;color:#fff;border:1px solid #eee;border-radius:5px;padding:5px 8px;font:12px system-ui,sans-serif;cursor:pointer;max-width:min(360px,80vw);text-align:left';
   button.title='Shift+6 長場巡走；1:55、2:55、5:55、7:55、9:55、11:55、13:55 提前找磁鐵；Boss最後倒數15秒專注追磁鐵，不返點；中途啟動立即接手；Lv120後寶箱按繼續保存。';
   button.setAttribute('aria-keyshortcuts','Shift+6');
@@ -423,7 +423,8 @@
       if(!visible(b)||b.closest('#'+UI_ID))return false;
       const rect=b.getBoundingClientRect();
       if(rect.top<0||rect.top>180)return false;
-      return /^(?:寶箱|宝箱)\d{1,5}$/i.test(norm(b.textContent||''));
+      const match=norm(b.textContent||'').match(/^(?:寶箱|宝箱)(\d{1,5})$/i);
+      return !!match&&Number(match[1])>0;
     })||null;
   }
   function treasureOpenButton(){
@@ -505,7 +506,7 @@
       // 只開寶箱：若 B 先開成技能頁，就切換上方「寶箱 n」分頁。
       if(isLevelUpPicker()){
         const tab=treasureTab(),stash=treasureOpenButton();
-        if(tab&&stash){
+        if(tab){
           // 防重入：點分頁後至少等待一秒讓選卡畫面換頁。
           const old=round.savePending;
           if(old&&old.button===tab&&old.kind==='treasure-tab'){

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 二轉巫師｜五核心自動選技＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.29
-// @description  v1.29：修正未取得尋寶率就誤放逐：只有已持有道具的正尋寶率詞條，或確認新尋寶道具選取後「道具格數真的增加」，才能進放逐；不再因文字/點擊假確認。
+// @version      1.30
+// @description  v1.30：巫師尋寶率誤放逐保護版。只認真實持有正尋寶率／確認新道具入格；未確認前無論5/5都禁止放逐，滿格時不誤選新道具。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
 // @run-at       document-idle
@@ -477,7 +477,7 @@
     if (message===lastDiagnostic) return;
     lastDiagnostic=message;
     if (button) button.title='Shift+1 切換；目前：'+message;
-    console.info('[HANS 巫師 v1.29]',message);
+    console.info('[HANS 巫師 v1.30]',message);
   }
   let nextRerollAt=0, pending=null, lastChoiceAt=0, lastChoiceKey='',choiceTries=0;
   const attempts=new WeakMap();
@@ -610,15 +610,19 @@
         const treasureCandidates=ordered.filter(isDiscoveryTreasure).sort((a,b)=>
           chestRank(b)-chestRank(a)||discoveryTieRank(b)-discoveryTieRank(a));
         if(!treasureState.foundDiscovery){
-          // 階段一：優先搶到一種確實含尋寶率的道具。
-          if(treasureCandidates.length){
-            chooseCard(treasureCandidates[0],'寶箱第1階段：先取得1種尋寶率');return;
+          // 沒有「已持有正數尋寶率」的證據就維持尋寶率優先，不進補5/5／放逐。
+          // 若5/5已滿，不能試圖再裝一個新的尋寶道具（遊戲通常無空格）。
+          const candidates=treasureCandidates.filter(c=>!items.full||!isNew(c));
+          if(candidates.length){
+            chooseCard(candidates[0],'寶箱第1階段：尋寶率尚未核實，先取得正加成');return;
           }
-          if(rerollTreasureForDiscovery(panel,'尚未取得尋寶率，優先尋找'))return;
-          const backup=ordered.filter(c=>items.count!==4||!isNew(c))
+          if(rerollTreasureForDiscovery(panel,'尚未確認持有正尋寶率，優先尋找'))return;
+          const backup=ordered.filter(c=>!isNew(c)||(!items.full&&items.count<4))
             .sort((a,b)=>chestRank(b)-chestRank(a))[0];
-          if(backup){chooseCard(backup,'尋寶率未出現：先選保底，不搶占最後一格');return;}
-          diagnostic('道具4/5但還沒有尋寶率，無重抽且全是新道具；暫停避免填滿最後一格');
+          if(backup){chooseCard(backup,'尋寶率尚未取得｜不放逐、不提前占滿最後一格');return;}
+          diagnostic(items.full?
+            '道具5/5卻沒有確認持有尋寶率｜禁止放逐及新增道具，需手動確認':
+            '道具4/5尚未取得尋寶率｜禁止放逐，保留最後一格等待尋寶率');
           return;
         }
         if(!items.full){
@@ -629,17 +633,7 @@
           const fallback=ordered.sort((a,b)=>chestRank(b)-chestRank(a))[0];
           if(fallback){chooseCard(fallback,'道具未滿，無重抽：先完成本箱選卡');return;}
         }else{
-          // 階段三：只有「已確認持有正尋寶率」才准在5/5放逐兩個不同道具。
-          // 即使沒有尋寶率也滿5/5，仍只找尋寶率，不浪費任何放逐。
-          if(!treasureState.foundDiscovery){
-            diagnostic('道具5/5但沒有確認持有尋寶率｜嚴禁放逐，先搜尋尋寶率');
-            if(treasureCandidates[0]){chooseCard(treasureCandidates[0],'道具滿格但未持有尋寶率：補尋寶詞條');return;}
-            if(rerollTreasureForDiscovery(panel,'道具5/5但尚無尋寶率，找正加成'))return;
-            const safeFallback=ordered.filter(c=>!isNew(c))
-              .sort((a,b)=>chestRank(b)-chestRank(a))[0];
-            if(safeFallback){chooseCard(safeFallback,'道具滿格未持有尋寶率：不放逐，保底');return;}
-            return;
-          }
+          // 階段三必須先通過上方「尋寶率已確認」門檻，放逐函式還有第二道硬保護。
           if(treasureState.banished.size<2&&tryTreasureBanish(cards))return;
           const bestDiscovery=treasureCandidates[0];
           if(bestDiscovery){chooseCard(bestDiscovery,
@@ -686,12 +680,12 @@
   }
   const safeTick=()=>{try{tick();}catch(error){
     diagnostic('腳本錯誤：'+String(error?.message||error));
-    console.error('[HANS 巫師 v1.29]',error);
+    console.error('[HANS 巫師 v1.30]',error);
   }};
   function enable(on){
     clearInterval(timer);
     timer=on?setInterval(safeTick,200):null;
-    button.textContent=label+'選技：'+(on?'開':'關')+' v1.29';
+    button.textContent=label+'選技：'+(on?'開':'關')+' v1.30';
     button.style.background=on?'#186442':'#384455';
     diagnostic(on?'已開啟，等待選卡畫面':'已關閉；按鈕或 Shift+1 開啟');
   }
@@ -700,7 +694,7 @@
     if(document.getElementById('hans-mage-autoskill-v123'))return;
     button=document.createElement('button');button.type='button';
     button.id='hans-mage-autoskill-v123';
-    button.dataset.hansScriptVersion='1.29';
+    button.dataset.hansScriptVersion='1.30';
     button.style.cssText='position:fixed;left:8px;bottom:84px;z-index:2147483647;color:white;border:1px solid white;border-radius:5px;padding:5px 8px;cursor:pointer';
     button.onclick=()=>{
       const on=timer===null;

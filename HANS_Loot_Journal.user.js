@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.9.6
-// @description  v0.9.6：右下角收合列新增當前已載入版本標籤；選關、戰利品、清背包只讀模擬及自動2×等既有功能不變。
+// @version      0.9.7
+// @description  v0.9.7：新增六周目完整選關及分頁辨識，依實際畫面採用無改版後綴的地圖名稱，掃描完整關卡並驗證解鎖狀態。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -768,7 +768,7 @@
   };
   const CATALOG_KEY='hh-ro-stage-catalog-v062', SELECT_KEY='hh-ro-dungeon-v16';
   const WORLD_KEY='hh-ro-expedition-world-v080', WORLD_TARGETS_KEY='hh-ro-world-targets-v080';
-  const WORLD_NAMES={1:'一周目',2:'二周目',3:'三周目',4:'四周目',5:'五周目'};
+  const WORLD_NAMES={1:'一周目',2:'二周目',3:'三周目',4:'四周目',5:'五周目',6:'六周目'};
   const worldSelections=(()=>{try{const v=JSON.parse(localStorage.getItem(WORLD_TARGETS_KEY)||'{}');return v&&typeof v==='object'?v:{}}catch{return {}}})();
   if(!worldSelections['1'])try{worldSelections['1']=localStorage.getItem(SELECT_KEY)||'cave'}catch{worldSelections['1']='cave'}
   let initialWorld=1;try{const w=Number(localStorage.getItem(WORLD_KEY));if(WORLD_NAMES[w])initialWorld=w}catch{}
@@ -793,7 +793,7 @@
     return 1;
   }
   function baseStageName(name){return norm(name).replace(REFORM_MARK,'');}
-  function stageFitsWorld(name,world){return stageNameWorld(name)===Number(world);}
+  function stageFitsWorld(name,world){return Number(world)===6?stageNameWorld(name)===1:stageNameWorld(name)===Number(world);}
   function stageLabelForWorld(base,world){
     const clean=baseStageName(base);
     return clean+(world===2?'・改':world===3?'・改²':world===4?'・改³':world===5?'・改⁴':'');
@@ -839,7 +839,7 @@
     const bases=new Set(Object.values(STAGES).map(x=>baseStageName(x.name)));
     for(const base of bases){
       if(!base||base.length<2||base.length>40)continue;
-      for(const world of [1,2,3,4,5]){
+      for(const world of [1,2,3,4,5,6]){
         const name=stageLabelForWorld(base,world),key='hans:w'+world+':'+norm(name);
         if(Object.values(STAGES).some(x=>x.world===world&&norm(x.name)===norm(name)))continue;
         STAGES[key]={name,re:namePattern(name),unlocked:null,level:'',world,verified:false};
@@ -968,7 +968,7 @@
       resetCatalog();catalog.world=tab.world;catalog.worldAt=Date.now();
     }
     // 四、五周目在首次進入時分開掃描全部關卡；未解鎖項目保留，但不會自動出征。
-    if((tab.world===4||tab.world===5) && !completedWorldScans.has(tab.world)){
+    if([4,5,6].includes(tab.world) && !completedWorldScans.has(tab.world)){
       scanAllStages(tab.world);
       return;
     }
@@ -1020,7 +1020,7 @@
     if(STAGES[desired])worldSelections[w]=desired;
   }
   const oldTarget=worldSelections['1'];
-  if(oldTarget&&!STAGES[oldTarget]&&oldTarget.startsWith('hans:')&&!/^hans:w[12345]:/.test(oldTarget)){
+  if(oldTarget&&!STAGES[oldTarget]&&oldTarget.startsWith('hans:')&&!/^hans:w[123456]:/.test(oldTarget)){
     rememberStage(oldTarget.slice(5),true,'',1);
     worldSelections['1']='hans:w1:'+norm(oldTarget.slice(5));
   }
@@ -1036,6 +1036,18 @@
   ]){
     if(Object.values(STAGES).some(x=>x.world===4&&norm(x.name)===norm(name)))continue;
     STAGES['hans:w4:'+norm(name)]={name,re:namePattern(name),unlocked:null,level,world:4,verified:false};
+  }
+  // 六周目目前畫面已核實前五張地圖名稱和等級；解鎖狀態仍需入場前動態確認。
+  // 只建立六周目候選，不讓它與一周目同名關卡互相覆蓋。
+  for(const [name,level] of [
+    ['普隆德拉原野','1-8'],
+    ['普隆德拉地下水道','9-12'],
+    ['失事輪','13-15'],
+    ['柏伊亞嵐島','16-20'],
+    ['斐揚森林','21-25']
+  ]){
+    if(Object.values(STAGES).some(x=>x.world===6&&norm(x.name)===norm(name)))continue;
+    STAGES['hans:w6:'+norm(name)]={name,re:namePattern(name),unlocked:null,level,world:6,verified:false};
   }
   seedKnownStageCandidates();
 
@@ -1886,9 +1898,9 @@
     const tabs={};
     for(const el of document.querySelectorAll('button,[role="button"]')){
       if(hud.contains(el)||!shown(el))continue;
-      const m=norm(el.textContent||'').match(/^([一二三四五12345])[周週]目$/);
+      const m=norm(el.textContent||'').match(/^([一二三四五六123456])[周週]目$/);
       if(!m)continue;
-      const id={'一':1,'二':2,'三':3,'四':4,'五':5,'1':1,'2':2,'3':3,'4':4,'5':5}[m[1]];
+      const id={'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'1':1,'2':2,'3':3,'4':4,'5':5,'6':6}[m[1]];
       if(id&&!tabs[id])tabs[id]=el;
     }
     // 尚未開放高周目的帳號仍保留前面周目；五周目按鈕不存在就不會誤點。
@@ -1946,9 +1958,12 @@
     const byTabs=tabs?selectedWorldFromTabs(tabs):null;
     // 清單中>=2張同周目的實際關卡名稱，比漸層按鈕背景色可靠。
     // 切換周目仍有 700ms 緩衝，避免沿用上一周目的卡片。
-    const world=byStages!==null?byStages:byTabs;
+    // 六周目目前關卡沒有「改」後綴，所以名字會被舊邏輯認作一周目。
+    // 僅當六周目分頁確實選中，且清單呈現原名，才用分頁作為權威證據。
+    const sixthPlain=byTabs===6&&(byStages===1||byStages===null);
+    const world=sixthPlain?6:(byStages!==null?byStages:byTabs);
     return {tabs,available:!!tabs,world:world??(tabs?null:1),
-      source:byStages!==null?'visible-stage-label':byTabs!==null?'tab':'unknown'};
+      source:sixthPlain?'sixth-world-selected-tab':byStages!==null?'visible-stage-label':byTabs!==null?'tab':'unknown'};
   }
   let worldClickAt=0;
   function ensureWorldTab(){
@@ -2025,7 +2040,7 @@
     if(!ensureWorldTab())return;
     if(catalog.world!==chosenWorld()){stageExplorerTick();return;}
     // 四、五周目首次進入先掃描完整關卡；不要與 seekStage 同時捲動。
-    if((chosenWorld()===4||chosenWorld()===5) && catalog.running){
+    if([4,5,6].includes(chosenWorld()) && catalog.running){
       tell('正在收錄'+WORLD_NAMES[chosenWorld()]+'完整關卡清單：'+catalog.observed.size+' 關');return;
     }
     // 掃描後才針對使用者選定關卡進行定向搜尋和出征確認。

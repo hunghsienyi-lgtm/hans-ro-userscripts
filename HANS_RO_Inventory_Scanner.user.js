@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜逐件裝備巡檢＋GS前十保護＋Discord完整紀錄
 // @namespace    https://ro.hans-webgametw.com/
-// @version      2.3.0
-// @description  V2.3.0：只保留傳說品質，法杖及指定八部位各 GS 前10；E 不掃描不動；其他品質取消保護前須預覽確認；Discord簡短摘要。
+// @version      2.3.1
+// @description  V2.3.1：面板可拖曳、可縮小且記住位置；沿用傳說裝備 GS 前10、E 排除、Discord 簡報規則。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -47,6 +47,8 @@
   let scanMeta = {total:0, eligible:0, ignoredE:0};
   const HOOK_KEY = 'hans-ro-v2-discord-webhook';
   const SCAN_KEY = 'hans-ro-v2-last-full-inventory-scan';
+  const PANEL_POS_KEY = 'hans-ro-inventory-panel-position-v1';
+  const PANEL_MIN_KEY = 'hans-ro-inventory-panel-minimized-v1';
   const savedHook = () => String(GM_getValue(HOOK_KEY, '') || GM_getValue('hans_ro_discord_webhook_private', '') || '').trim();
   const validHook = s => /^https:\/\/(?:discord\.com|discordapp\.com)\/api\/webhooks\/\d+\/[A-Za-z0-9_-]+(?:\?.*)?$/.test(s);
   const nowString = () => new Date().toLocaleString('zh-TW', {hour12:false});
@@ -65,7 +67,7 @@
   const pane = document.createElement('section');
   pane.id = ID;
   pane.innerHTML = `
-    <div class="hp-title"><strong>HANS｜傳說裝備前10巡檢 V2.3.0</strong><button id="hp-toggle" title="收合/展開">−</button></div>
+    <div class="hp-title"><strong title="按住這個藍色標題列就能拖曳">HANS｜傳說裝備前10 V2.3.1</strong><button id="hp-toggle" title="縮小／展開">−</button></div>
     <div id="hp-body">
       <div class="hp-sub">主城按 C → 背包 → 全部；E 穿戴完全跳過。只保留傳說品質：法杖、頭上中下、披肩、飾品、鞋子、盾牌、衣服（鎧甲）。</div>
       <div class="hp-sub">逐件掃描非 E：只對傳說法杖及其餘指定部位傳說裝備排 GS 前10。其他品質與非杖武器不保留；先預覽再手動確認。Discord只傳摘要。</div>
@@ -81,7 +83,7 @@
   pane.style.cssText = 'position:fixed;right:12px;bottom:14px;width:365px;max-width:calc(100vw - 24px);max-height:65vh;overflow:auto;z-index:2147482000;background:#f9fbff;color:#263958;border:1px solid #7795c5;border-radius:12px;box-shadow:0 8px 30px #1b325b55;font:12px/1.5 Arial,"Microsoft JhengHei",sans-serif';
   const style = document.createElement('style');
   style.textContent = `
-  #${ID} .hp-title{display:flex;justify-content:space-between;align-items:center;background:#31588f;color:white;padding:8px 10px;position:sticky;top:0;z-index:1}
+  #${ID} .hp-title{display:flex;justify-content:space-between;align-items:center;gap:8px;background:#31588f;color:white;padding:8px 10px;position:sticky;top:0;z-index:1;cursor:grab;touch-action:none;user-select:none} #${ID} .hp-title:active{cursor:grabbing} #${ID} .hp-title strong{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;min-width:0} #${ID}.hp-collapsed{width:230px!important;max-height:none!important;overflow:visible!important} #${ID}.hp-collapsed #hp-body{display:none!important} #${ID} #hp-toggle{flex:none;min-width:27px;cursor:pointer}
   #${ID} #hp-body{padding:9px} #${ID} .hp-sub{color:#64718b;font-size:11px;margin-bottom:5px}
   #${ID} .hp-bar{display:flex;gap:6px;margin:7px 0} #${ID} button{cursor:pointer;background:#eaf1fd;border:1px solid #aabedc;border-radius:6px;color:#203b67;font-size:12px;padding:5px 7px}
   #${ID} .hp-bar button{flex:1} #${ID} .hp-bar input{flex:2;min-width:0;border:1px solid #afbfdb;padding:5px;border-radius:5px} #${ID} #hp-apply{background:#dbebd9} #${ID} button:disabled{opacity:.45;cursor:not-allowed}
@@ -102,10 +104,71 @@
     $('hp-stop').disabled = !running;
     $('hp-export').disabled = !records.length;
   };
-  $('hp-toggle').onclick = () => {
-    const b = $('hp-body'); b.hidden = !b.hidden;
-    $('hp-toggle').textContent = b.hidden ? '+' : '−';
+  // 面板可拖曳：按住藍色標題列即可搬移。位置與縮小狀態只存本機。
+  const titleBar=pane.querySelector('.hp-title');
+  const clampPosition=(x,y)=>{
+    const width=pane.getBoundingClientRect().width || 230;
+    const height=pane.getBoundingClientRect().height || 34;
+    return {x:Math.max(0,Math.min(Math.round(x),Math.max(0,innerWidth-width))),
+      y:Math.max(0,Math.min(Math.round(y),Math.max(0,innerHeight-height)))};
   };
+  const placePanel=(x,y)=>{
+    const p=clampPosition(x,y);
+    pane.style.right='auto';pane.style.bottom='auto';
+    pane.style.left=p.x+'px';pane.style.top=p.y+'px';
+    return p;
+  };
+  const rememberPosition=()=>{
+    const b=pane.getBoundingClientRect();
+    GM_setValue(PANEL_POS_KEY,JSON.stringify({x:Math.round(b.left),y:Math.round(b.top)}));
+  };
+  const savedPosition=()=>{
+    try{
+      const p=JSON.parse(GM_getValue(PANEL_POS_KEY,'null'));
+      return Number.isFinite(p?.x)&&Number.isFinite(p?.y)?p:null;
+    }catch{return null;}
+  };
+  const setCollapsed=(value)=>{
+    const collapsed=Boolean(value);
+    $('hp-body').hidden=collapsed;
+    pane.classList.toggle('hp-collapsed',collapsed);
+    $('hp-toggle').textContent=collapsed?'+':'−';
+    $('hp-toggle').title=collapsed?'展開巡檢面板':'縮小巡檢面板';
+    GM_setValue(PANEL_MIN_KEY,collapsed);
+    const b=pane.getBoundingClientRect();
+    if(pane.style.left)placePanel(b.left,b.top);
+  };
+  setCollapsed(Boolean(GM_getValue(PANEL_MIN_KEY,false)));
+  const initialPos=savedPosition();
+  if(initialPos)placePanel(initialPos.x,initialPos.y);
+  $('hp-toggle').onclick=()=>{setCollapsed(!$('hp-body').hidden);rememberPosition();};
+  let dragging=null;
+  titleBar.addEventListener('pointerdown',ev=>{
+    if(ev.button!==0||ev.target.closest('button,input,a'))return;
+    const bounds=pane.getBoundingClientRect();
+    dragging={id:ev.pointerId,offsetX:ev.clientX-bounds.left,offsetY:ev.clientY-bounds.top};
+    try{titleBar.setPointerCapture(ev.pointerId);}catch{}
+    ev.preventDefault();
+  });
+  titleBar.addEventListener('pointermove',ev=>{
+    if(!dragging||dragging.id!==ev.pointerId)return;
+    placePanel(ev.clientX-dragging.offsetX,ev.clientY-dragging.offsetY);
+    ev.preventDefault();
+  });
+  const finishDragging=ev=>{
+    if(!dragging||dragging.id!==ev.pointerId)return;
+    dragging=null;
+    try{if(titleBar.hasPointerCapture(ev.pointerId))titleBar.releasePointerCapture(ev.pointerId);}catch{}
+    rememberPosition();
+  };
+  titleBar.addEventListener('pointerup',finishDragging);
+  titleBar.addEventListener('pointercancel',finishDragging);
+  window.addEventListener('resize',()=>{
+    if(!pane.style.left)return;
+    const rect=pane.getBoundingClientRect();
+    placePanel(rect.left,rect.top);
+    rememberPosition();
+  });
   $('hp-stop').onclick = () => { aborted = true; status('已請求停止；處理完目前這件就中止。'); };
   $('hp-save-hook').onclick = () => {
     const hook=$('hp-hook').value.trim();

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 盜賊→流氓｜六核心自動選技＋優先放逐＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.1.8
-// @description  流氓v1.1.8：技能5/5後連續用完三次放逐，只排除刀扇，確認扣次數後才繼續；未用完不選卡。
+// @version      1.1.9
+// @description  流氓v1.1.9：刀扇看到就選，技能未5/5不放逐；技能5/5後放逐刀扇以外選項。增加常駐啟動狀態和重複腳本警告，方便排除沒有執行的問題。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
 // @run-at       document-idle
@@ -13,9 +13,18 @@
 (() => {
   'use strict';
   const id = 'hans-rogue-autoskill-v100';
-  if (document.getElementById(id)) return;
+  if (document.getElementById(id)) {
+    // 若舊版仍在執行，它會先註冊相同的畫面 ID 而讓新版直接退出。
+    // 顯示原因，不要靜默失敗或在同一頁偷偷建立兩個同時選卡的控制器。
+    const warning=document.createElement('div');
+    warning.id='hans-rogue-duplicate-warning-119';
+    warning.textContent='流氓 v1.1.9 未接管：偵測到重複／舊版流氓腳本。請到 Tampermonkey 停用其他流氓版本後重新整理。';
+    warning.style.cssText='position:fixed;top:8px;right:8px;z-index:2147483647;background:#743b25;color:white;font:12px system-ui;padding:10px;max-width:330px;border:1px solid white;border-radius:6px';
+    (document.body||document.documentElement).append(warning);
+    return;
+  }
   const label = '流氓';
-  const version = '1.1.8';
+  const version = '1.1.9';
   const potion = [/傷害藥水|damage potion|potion of damage/i, /範圍藥水|area potion|potion of area/i];
   const normalize = s => String(s||'').normalize('NFKC').replace(/\s+/g,' ').trim();
   const read = (el,selector) => normalize(el?.querySelector(selector)?.textContent||'');
@@ -336,7 +345,9 @@
     console.info('[HANS 流氓 v'+version+'] '+s);
   }
   function statusVisible(on){
-    if(statusBox)statusBox.hidden=!on;
+    // 診斷模式：即使選技腳本尚未開啟，也顯示版本與目前狀態。
+    // 使用者能立即區分「根本沒載入」與「已載入但沒按 Shift+2」。
+    if(statusBox)statusBox.hidden=false;
   }
   function tryBanish(cards,info,panel){
     if(!info.explicitFiveOfFive){resetExile();return false;}
@@ -453,12 +464,14 @@
       return;
     }
     if(info.ready){
-      // 已辨識 5/5，逐張對應卡片下的放逐按鈕，刀扇只能最後選。
-      // 每次成功點擊放逐都結束這輪 tick；等待遊戲更新畫面後再重新判斷。
-      // 因此不會在同一輪同時觸發「放逐」與「選刀扇」。
-      if(tryBanish(cards,info,panel))return;
+      // 刀扇是唯一第一梯隊：出現時直接點，不先浪費該輪放逐。
+      // 沒有刀扇才逐張放逐其他技能，按後等待遊戲確認扣次數。
       const {choice}=chooseSkill(cards,info);
-      if(choice){chooseCard(choice.card,'六招已齊｜非刀扇放逐優先，最後選刀扇');return;}
+      if(choice && coreOf(choice.card)?.id==='knife'){
+        chooseCard(choice.card,'刀扇直接優先｜不比較詞條');return;
+      }
+      if(tryBanish(cards,info,panel))return;
+      if(choice){chooseCard(choice.card,'六招已齊｜沒有可用放逐');return;}
       if(tryReroll(panel,'六招已齊且沒有刀扇，尋找刀扇'))return;
     }else{
       // 未齊前絕不消耗放逐，刀扇及其他缺少的核心才有選取權。
@@ -482,10 +495,10 @@
   function safeTick(){try{tick();}catch(e){diagnostic('腳本錯誤：'+(e?.message||e));console.error('[HANS 流氓]',e);}}
   function enable(on){
     clearInterval(timer);timer=on?setInterval(safeTick,400):null;
-    if(!on)statusVisible(false);
+    statusVisible(on);
     if(button){button.textContent=label+'選技：'+(on?'開':'關')+' v'+version;
       button.style.background=on?'#186442':'#384455';}
-    diagnostic(on?'已啟動（滿5/5先用完三次放逐，刀扇除外）':'已停用，Shift+2 可啟動');
+    diagnostic(on?'已啟動｜技能5/5後刀扇有就點，沒有刀扇才放逐':'尚未啟動｜按 Shift+2 或左側流氓選技按鈕啟用');
   }
   function mount(){
     if(!document.body){setTimeout(mount,100);return;}
@@ -494,12 +507,12 @@
     button.dataset.hansScriptVersion=version;
     statusBox=document.createElement('div');
     statusBox.id='hans-rogue-live-status';
-    statusBox.hidden=true;
+    statusBox.hidden=false;
     statusBox.style.cssText='position:fixed;bottom:4px;right:8px;z-index:2147483646;'+
       'background:#102d47eF;color:#eef7ff;border:1px solid #87aacc;border-radius:6px;'+
       'font:11px/1.3 system-ui,sans-serif;padding:4px 7px;max-width:min(410px,82vw);'+
-      'pointer-events:none;overflow-wrap:anywhere';
-    statusBox.textContent='流氓 v'+version+'｜等待選卡';
+      'pointer-events:none;overflow-wrap:anywhere;box-shadow:0 2px 12px #0009';
+    statusBox.textContent='流氓 v'+version+'｜尚未啟動，請按 Shift+2';
     document.body.append(statusBox);
     button.style.cssText='position:fixed;left:8px;bottom:126px;z-index:2147483647;color:white;border:1px solid white;border-radius:5px;padding:5px 8px;cursor:pointer';
     button.onclick=()=>{const on=timer===null;if(on)document.dispatchEvent(new Event('ro-profile-selected'));enable(on);};

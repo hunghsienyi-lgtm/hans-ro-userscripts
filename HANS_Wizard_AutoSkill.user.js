@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 二轉巫師｜五核心自動選技＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.24
-// @description  修復Lv31已關閉翻牌後最後一張卡仍需選擇而卡住；所有仍顯示的升級卡依五核心、目標衝擊與寶箱尋寶率原規則選完。
+// @version      1.25
+// @description  v1.25：人物達Lv120後不自動選升級技能；寶箱僅在下一箱需求低於7000 Z時抽取，金額未讀到或超標則停止。其他選卡規則不變。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
 // @run-at       document-idle
@@ -85,7 +85,7 @@
     return {amount:Math.max(target,impact),kind:impact>target?'衝擊':'目標'};
   }
 
-  // v1.24：二轉五核心；暴風雪 > 霜凍之術 > 三箭；「冰凍術」不是「霜凍之術」。
+  // v1.25：二轉五核心；暴風雪 > 霜凍之術 > 三箭；「冰凍術」不是「霜凍之術」。
   const coreSkills = [
     {id:'storm', label:'暴風雪', name:/暴風雪|storm\s*gust|\bblizzard\b/i,
       slot:/blizzard|storm[-_]?gust|(?:^|[_.-])storm(?:gust)?$|^stormgust$|^wizardstorm$/i},
@@ -139,7 +139,7 @@
   }
   function scoreSkill(card,info){
     const core=coreOf(card), newSkill=isNew(card), text=read(card,'.pk-lines').normalize('NFKC');
-    // v1.24：先拿缺少的五大核心技能；五核心齊全後才把 +目標／+衝擊列為第一優先。
+    // v1.25：先拿缺少的五大核心技能；五核心齊全後才把 +目標／+衝擊列為第一優先。
     // 即使卡片上同時寫有 +目標，只要它屬於「新技能」，仍按補技能處理。
     if(newSkill && info.full) return {score:-Infinity,reason:'技能格已滿'};
     if(newSkill){
@@ -291,7 +291,7 @@
     if (message===lastDiagnostic) return;
     lastDiagnostic=message;
     if (button) button.title='Shift+1 切換；目前：'+message;
-    console.info('[HANS 巫師 v1.24]',message);
+    console.info('[HANS 巫師 v1.25]',message);
   }
   let nextRerollAt=0, pending=null, lastChoiceAt=0, lastChoiceKey='',choiceTries=0;
   const attempts=new WeakMap();
@@ -319,6 +319,55 @@
     diagnostic('選擇：'+cardName(card)+'｜'+why);
     card.click();
   }
+  // Lv120 後不再選技能；寶箱只在 HUD 的下一箱需求金額 <7000 Z 時允許抽。
+  // 「目前持有 Zeny」不等於「下一箱的需求 Zeny」。
+  let rewardLevel120=false;
+  function liveCharacterLevel(panel){
+    for(const el of document.querySelectorAll('span,b,strong,small,div')){
+      if(el.childElementCount>1||!shown(el)||el.closest('#hans-left-control-center-v100'))continue;
+      const r=el.getBoundingClientRect();
+      if(r.left<0||r.left>380||r.top<0||r.top>145)continue;
+      const m=String(el.textContent||'').normalize('NFKC').trim().match(/^Lv\.?\s*(\d{1,3})$/i);
+      if(m)return Number(m[1]);
+    }
+    const txt=String(panel?.textContent||'').normalize('NFKC').slice(0,350);
+    const m=txt.match(/(?:^|[\s▲△])Lv\.?\s*(\d{1,3})\s*[:：]/i);
+    return m?Number(m[1]):null;
+  }
+  function liveNextChestCost(){
+    for(const el of document.querySelectorAll('span,small,b,strong,div')){
+      if(el.childElementCount>3||!shown(el)||el.closest('#picker,#hans-left-control-center-v100,#ro-loot-journal-v05-ui'))continue;
+      const r=el.getBoundingClientRect();
+      if(r.top<0||r.top>125||r.left<95||r.right>innerWidth+5)continue;
+      const t=String(el.textContent||'').normalize('NFKC').replace(/\s+/g,'');
+      if(t.length>95)continue;
+      const m=t.match(/寶箱[:：]?(?:需要|需求|費用|花費)?([0-9,]{1,9})(?:z|zeny)(?![a-z])/i);
+      if(!m)continue;
+      const val=Number(m[1].replace(/,/g,''));
+      if(Number.isFinite(val)&&val>=0)return val;
+    }
+    return null;
+  }
+  function stopSelectionAtThreshold(panel,chest){
+    const lv=liveCharacterLevel(panel);
+    if(lv!==null)rewardLevel120=lv>=120;
+    if(!rewardLevel120)return false;
+    if(!chest){
+      diagnostic('Lv120已到｜不再選升級技能，改由巡走模組保存');
+      return true;
+    }
+    const price=liveNextChestCost();
+    if(price===null){
+      diagnostic('Lv120後寶箱需求金額未辨識｜停止選卡避免超額');
+      return true;
+    }
+    if(price>=7000){
+      diagnostic('下一箱需求'+price+' Z已達7000門檻｜停止開寶箱');
+      return true;
+    }
+    return false;
+  }
+
   function tick(){
     const reveal=document.querySelector('#drop-reveal:not(.hidden)');
     if(shown(reveal)){
@@ -337,6 +386,8 @@
       read(panel,'.pk-title')||read(panel,'h1'));
     const chest=/^(?:寶箱|寶箱選擇|treasure\s*chest)\s*!?$/i.test(title);
     const level=/^(?:升\s*級|強化\s*技能|level\s*up|upgrade\s*(?:a\s*)?skill)\s*!?$/i.test(title);
+    // Lv120後優先套用技能停止／寶箱成本上限。
+    if(stopSelectionAtThreshold(panel,chest))return;
     // 「之後不再翻牌」僅關閉後續翻牌；當前顯示的 Lv31 卡仍需要選完。
     // 不再按等級封鎖：只要升級卡片仍可見，就完成選擇和確認。
     const byLayout=!chest&&!level&&shown(document.querySelector('#lu-sockets'))&&!!panel.querySelector('button.pk-card');
@@ -404,12 +455,12 @@
   }
   const safeTick=()=>{try{tick();}catch(error){
     diagnostic('腳本錯誤：'+String(error?.message||error));
-    console.error('[HANS 巫師 v1.24]',error);
+    console.error('[HANS 巫師 v1.25]',error);
   }};
   function enable(on){
     clearInterval(timer);
     timer=on?setInterval(safeTick,400):null;
-    button.textContent=label+'選技：'+(on?'開':'關')+' v1.24';
+    button.textContent=label+'選技：'+(on?'開':'關')+' v1.25';
     button.style.background=on?'#186442':'#384455';
     diagnostic(on?'已開啟，等待選卡畫面':'已關閉；按鈕或 Shift+1 開啟');
   }
@@ -418,7 +469,7 @@
     if(document.getElementById('hans-mage-autoskill-v123'))return;
     button=document.createElement('button');button.type='button';
     button.id='hans-mage-autoskill-v123';
-    button.dataset.hansScriptVersion='1.24';
+    button.dataset.hansScriptVersion='1.25';
     button.style.cssText='position:fixed;left:8px;bottom:84px;z-index:2147483647;color:white;border:1px solid white;border-radius:5px;padding:5px 8px;cursor:pointer';
     button.onclick=()=>{
       const on=timer===null;

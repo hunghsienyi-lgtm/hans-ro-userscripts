@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜逐件裝備巡檢＋GS前十保護＋Discord完整紀錄
 // @namespace    https://ro.hans-webgametw.com/
-// @version      2.5.0
-// @description  V2.5.0：固定下9右13去礦石商人、左13上9返程；勾選五品質後按一鍵販賣及確認全部賣掉；獨立控制與安全確認。
+// @version      2.5.1
+// @description  V2.5.1：每步固定200ms；到商人先以空白鍵互動並自動開啟販賣頁；修正帶件數的一鍵販賣按鈕辨識與獨立對話測試。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -67,17 +67,18 @@
   const pane = document.createElement('section');
   pane.id = ID;
   pane.innerHTML = `
-    <div class="hp-title"><strong title="按住這個藍色標題列就能拖曳">HANS｜傳說裝備前10 V2.5.0</strong><button id="hp-toggle" title="縮小／展開">−</button></div>
+    <div class="hp-title"><strong title="按住這個藍色標題列就能拖曳">HANS｜傳說裝備前10 V2.5.1</strong><button id="hp-toggle" title="縮小／展開">−</button></div>
     <div id="hp-body">
       <div class="hp-sub">主城按 C → 背包 → 全部；E 穿戴完全跳過。只保留傳說品質：法杖、頭上中下、披肩、飾品、鞋子、盾牌、衣服（鎧甲）。</div>
       <div class="hp-sub">逐件掃描非 E：只對傳說法杖及其餘指定部位傳說裝備排 GS 前10。其他品質與非杖武器不保留；先預覽再手動確認。Discord只傳摘要。</div>
       <div class="hp-bar"><button id="hp-scan">① 掃描非 E 裝備</button><button id="hp-scan-dc">① 掃描非 E＋傳 DC</button></div>
       <div class="hp-bar"><button id="hp-apply" disabled>② 確認前10保護</button><button id="hp-stop" disabled>停止</button></div>
       <div class="hp-sub" style="margin-top:9px;border-top:1px solid #cbd5e1;padding-top:7px"><b>商人路線＋一鍵販賣（可獨立執行）</b></div>
-      <div class="hp-sub">固定路線：從原點 ↓9 下 →13 下，回程 ←13 下 ↑9 下；不用錄製。五種品質全勾後依序按「一鍵販賣」和「全部賣掉」，販賣前需確認。</div>
-      <div class="hp-bar"><button id="hp-route-go">↓9 →13｜去商人</button><button id="hp-route-return">←13 ↑9｜返回原點</button></div>
+      <div class="hp-sub">固定路線 ↓9 →13／返回 ←13 ↑9，單次按鍵固定 200ms。抵達礦石商人先送空白鍵互動，再開「販賣」。出售前仍需確認。</div>
+      <div class="hp-bar"><button id="hp-route-go">↓9 →13｜去商人</button><button id="hp-route-talk">💬 只開商人對話</button></div>
+      <div class="hp-bar"><button id="hp-route-return">←13 ↑9｜返回原點</button><button id="hp-route-stop">停止</button></div>
       <div class="hp-bar"><button id="hp-route-run">▶ 去商人＋賣光＋返程</button><button id="hp-route-sell">商人已開：販賣</button></div>
-      <div class="hp-bar"><label style="flex:1">按鍵方式 <select id="hp-route-keys"><option value="wasd">WASD</option><option value="arrows">方向鍵</option></select></label><label>單次按住 <input id="hp-route-tap-ms" type="number" min="50" max="300" step="10" value="110" style="width:48px"/>ms</label><button id="hp-route-stop">停止</button></div>
+      <div class="hp-bar"><label style="flex:1">按鍵方式 <select id="hp-route-keys"><option value="wasd">WASD</option><option value="arrows">方向鍵</option></select></label><span style="align-self:center">固定每下 200ms</span></div>
       <div class="hp-sub" id="hp-route-status">固定路線：↓9 →13｜返程 ←13 ↑9。從原點使用。</div>
       <div class="hp-sub"><b>Discord Webhook（只保存在本機 Tampermonkey）：</b></div>
       <div class="hp-bar"><input id="hp-hook" type="password" placeholder="貼入 Webhook URL，不要貼到聊天" autocomplete="off"><button id="hp-save-hook">儲存</button></div>
@@ -596,12 +597,12 @@
     const $r=id=>pane.querySelector('#'+id);
     const inform=message=>{const el=$r('hp-route-status');if(el)el.textContent=message;};
     const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-    const buttons={go:$r('hp-route-go'),back:$r('hp-route-return'),full:$r('hp-route-run'),
-      sell:$r('hp-route-sell'),stop:$r('hp-route-stop'),keys:$r('hp-route-keys'),hold:$r('hp-route-tap-ms')};
+    const buttons={go:$r('hp-route-go'),talk:$r('hp-route-talk'),back:$r('hp-route-return'),full:$r('hp-route-run'),
+      sell:$r('hp-route-sell'),stop:$r('hp-route-stop'),keys:$r('hp-route-keys')};
     let busy=false,stopped=false,pressed=null;
     const isReady=()=>!busy&&!running;
     const refresh=()=>{
-      for(const key of ['go','back','full','sell'])buttons[key].disabled=!isReady();
+      for(const key of ['go','talk','back','full','sell'])buttons[key].disabled=!isReady();
       buttons.stop.disabled=!busy;
     };
     const keyEntry=dir=>{
@@ -619,7 +620,7 @@
     }
     function panel(){
       const matches=[...document.querySelectorAll('button')]
-        .filter(b=>!pane.contains(b)&&isVisible(b)&&norm(textOf(b))==='一鍵販賣');
+        .filter(b=>!pane.contains(b)&&isVisible(b)&&/^一鍵販賣(?:[（(]|$)/u.test(norm(textOf(b))));
       for(const button of matches){
         for(let node=button.parentElement,n=0;node&&n<10&&node!==document.body;node=node.parentElement,n++){
           const content=(node.innerText||node.textContent||'').replace(/\s+/g,'');
@@ -635,7 +636,7 @@
     const shopOpen=()=>Boolean(panel());
     async function walk(reverse){
       const seq=reverse?INBOUND:OUTBOUND;
-      const tap=Math.max(50,Math.min(300,Number(buttons.hold.value)||110));
+      const tap=200; // 使用者實測：每次方向按鍵固定 200ms
       const gap=115;
       let completed=0;
       if(shopOpen())throw Error('商人視窗尚未關閉，不能移動');
@@ -668,22 +669,55 @@
       clickable.click();
       return true;
     }
-    async function openShop(){
-      if(shopOpen())return true;
-      tryNpc();
-      const end=Date.now()+6500;
+    async function pressSpace(){
+      activeCheck();
+      const eventOptions={key:' ',code:'Space',keyCode:32,which:32,bubbles:true,cancelable:true};
+      // 由 document 送出並冒泡至 window，兼容遊戲掛在 document/window 的互動監聽器。
+      inform('已抵達礦石商人附近：按空白鍵互動...');
+      document.dispatchEvent(new KeyboardEvent('keydown',eventOptions));
+      await sleep(200);
+      document.dispatchEvent(new KeyboardEvent('keyup',eventOptions));
+      activeCheck();
+    }
+    function findSellTab(){
+      const tabs=[...document.querySelectorAll('button,[role="tab"]')]
+        .filter(b=>!pane.contains(b)&&isVisible(b)&&norm(textOf(b))==='販賣'&&!b.disabled);
+      // 若同時有多個「販賣」控制項，為避免誤按，不自行猜哪個屬於商人。
+      return tabs.length===1?tabs[0]:null;
+    }
+    async function waitForSellPage(ms){
+      const until=Date.now()+ms;
       let tabClicked=false;
-      while(Date.now()<end){
+      while(Date.now()<until){
         activeCheck();
         if(shopOpen())return true;
         if(!tabClicked){
-          const tab=[...document.querySelectorAll('button,[role="tab"]')]
-            .find(b=>!pane.contains(b)&&isVisible(b)&&norm(textOf(b))==='販賣'&&!b.disabled);
-          if(tab){tab.click();tabClicked=true;}
+          const tab=findSellTab();
+          if(tab){
+            inform('商人互動已開啟，切換「販賣」分頁...');
+            tab.click();
+            tabClicked=true;
+          }
         }
         await sleep(160);
       }
       return shopOpen();
+    }
+    async function openShop(){
+      if(shopOpen())return true;
+      // 館長／遠征隊長同樣用空白鍵 NPC 互動，先用真正的互動鍵而不是點文字標籤。
+      await pressSpace();
+      if(await waitForSellPage(2400))return true;
+      activeCheck();
+      // 若該 NPC 必須點擊名稱才能觸發，才補做一次點選，不盲目點地圖座標。
+      if(tryNpc()){
+        inform('空白鍵後尚未開啟，正在嘗試點擊「礦石商人」...');
+        if(await waitForSellPage(1600))return true;
+      }
+      // 最後只再補一次空白鍵，不連續狂按以免開錯 NPC。
+      await pressSpace();
+      if(await waitForSellPage(2500))return true;
+      return false;
     }
     const checkboxFor=(root,labelText,exact=false)=>{
       const labels=[...root.querySelectorAll('label')];
@@ -790,6 +824,11 @@
       if(!isReady())return;
       busy=true;stopped=false;refresh();
       try{
+        if(action==='talk'){
+          if(!await openShop())throw Error('空白鍵已嘗試，但礦石商人仍未開啟。請確認角色貼近 NPC 並截圖，目前不會自動販賣。');
+          inform('商人「販賣」頁已成功開啟，可按「商人已開：販賣」。');
+          return;
+        }
         if(action==='go'){
           await walk(false);
           if(!await openShop())throw Error('已走到商人附近，但未能開啟「販賣」頁；請手動點礦石商人。');
@@ -822,6 +861,7 @@
       }finally{release();busy=false;refresh();}
     }
     buttons.go.onclick=()=>operate('go');
+    buttons.talk.onclick=()=>operate('talk');
     buttons.back.onclick=()=>operate('back');
     buttons.sell.onclick=()=>operate('sell');
     buttons.full.onclick=()=>operate('full');

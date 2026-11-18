@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜逐件裝備巡檢＋GS前十保護＋Discord完整紀錄
 // @namespace    https://ro.hans-webgametw.com/
-// @version      2.6.4
-// @description  V2.6.4：修正商人品質數量在一鍵販賣按鈕上方造成的誤判；勾選、販賣、全部賣掉、關閉各步驟延長等待，返回原點。
+// @version      2.6.5
+// @description  V2.6.5：修正商人五品質數量讀取、React更新後販賣按鈕被重建造成的誤判；所有勾選、販賣、確認、關閉操作均慢速分步。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -69,7 +69,7 @@
   const pane = document.createElement('section');
   pane.id = ID;
   pane.innerHTML = `
-    <div class="hp-title"><strong title="按住這個藍色標題列就能拖曳">HANS｜一鍵清背包 V2.6.4</strong><button id="hp-toggle" title="縮小／展開">−</button></div>
+    <div class="hp-title"><strong title="按住這個藍色標題列就能拖曳">HANS｜一鍵清背包 V2.6.5</strong><button id="hp-toggle" title="縮小／展開">−</button></div>
     <div id="hp-body">
       <div class="hp-sub">主城按 C → 背包 → 全部；E 穿戴完全跳過。只保留傳說品質：法杖、頭上中下、披肩、飾品、鞋子、盾牌、衣服（鎧甲）。</div>
       <div class="hp-sub">一鍵流程：非 E 掃描→保護前十→複掃→回普隆德拉→商人勾五品質→一鍵販賣→全部賣掉→關閉商人視窗→原路返回。異常停止。</div>
@@ -767,6 +767,7 @@
         inform('正在勾選 '+g+' 品質...');
         if(!cb.checked){cb.click();await sleep(380);}
         if(!cb.checked)throw Error('無法勾選品質：'+g);
+        await sleep(270);
       }
       for(const name of ['包含已插卡','包含已精煉']){
         const cb=checkboxFor(p.root,name);
@@ -821,7 +822,8 @@
       // 已明確授權免確認：完整掃描／保護驗證成功才操作一鍵販賣。
       activeCheck();
       const current=panel();
-      if(!current||current.button!==p.button||p.button.disabled)throw Error('販賣介面已變更，停止');
+      if(!current||current.button.disabled)throw Error('商人販賣按鈕不存在或無法操作，停止');
+      if(countsFrom(current).total!==total)throw Error('勾選後待售總數改變，暫停販賣');
       for(const g of GRADES){
         if(!checkboxFor(current.root,g,true)?.checked)throw Error('品質設定變動：'+g);
       }

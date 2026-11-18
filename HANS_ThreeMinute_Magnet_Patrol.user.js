@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HANS RO｜三分鐘刷卡巡走｜0:55磁鐵＋最後15秒只找磁鐵
 // @namespace    hunghung-ro-local-tools
-// @version      1.0.5
+// @version      1.0.6
 // @description  HANS三分鐘短場：走到Lv30返點站打30秒；0:55起找第一顆磁鐵，2:45起最後15秒只找磁鐵（含2:55），不返點，完成後再捨棄。
 // @match        https://ro.hans-webgametw.com/*
 // @run-at       document-idle
@@ -34,6 +34,7 @@
   };
   const button=document.createElement('button');
   button.id=UI_ID;button.type='button';button.setAttribute('aria-keyshortcuts','Shift+7');
+  button.dataset.hansScriptVersion='1.0.6';
   button.style.cssText='position:fixed;left:8px;bottom:158px;z-index:2147483647;background:#384455;color:white;border:1px solid #eaeaea;border-radius:6px;padding:5px 8px;font:12px system-ui;max-width:min(370px,90vw);cursor:pointer;text-align:left';
   button.title='Shift+7 開關；走到Lv30返點、站打30秒，0:55起找第一顆磁鐵；2:45起進入最後15秒只找磁鐵（含2:55），不返點，3:00處理後捨棄重進。';
   (document.body||document.documentElement).append(button);

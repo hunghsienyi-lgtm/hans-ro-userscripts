@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 二轉巫師｜五核心自動選技＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.26
-// @description  v1.26：已開啟寶箱三選一必須先完成選卡，即使費用達7000 Z；選完後停止再開下一箱，保留剩餘獎勵。
+// @version      1.27
+// @description  v1.27：巫師寶箱新策略：先取得1種尋寶率、再優先補滿道具5/5；滿格後放逐2種非尋寶率道具，後續優先尋寶率強化；保留7000Z最後一箱選取與升級五核心。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
 // @run-at       document-idle
@@ -85,7 +85,7 @@
     return {amount:Math.max(target,impact),kind:impact>target?'衝擊':'目標'};
   }
 
-  // v1.26：二轉五核心；暴風雪 > 霜凍之術 > 三箭；「冰凍術」不是「霜凍之術」。
+  // v1.27：二轉五核心；暴風雪 > 霜凍之術 > 三箭；「冰凍術」不是「霜凍之術」。
   const coreSkills = [
     {id:'storm', label:'暴風雪', name:/暴風雪|storm\s*gust|\bblizzard\b/i,
       slot:/blizzard|storm[-_]?gust|(?:^|[_.-])storm(?:gust)?$|^stormgust$|^wizardstorm$/i},
@@ -139,7 +139,7 @@
   }
   function scoreSkill(card,info){
     const core=coreOf(card), newSkill=isNew(card), text=read(card,'.pk-lines').normalize('NFKC');
-    // v1.26：先拿缺少的五大核心技能；五核心齊全後才把 +目標／+衝擊列為第一優先。
+    // v1.27：先拿缺少的五大核心技能；五核心齊全後才把 +目標／+衝擊列為第一優先。
     // 即使卡片上同時寫有 +目標，只要它屬於「新技能」，仍按補技能處理。
     if(newSkill && info.full) return {score:-Infinity,reason:'技能格已滿'};
     if(newSkill){
@@ -285,13 +285,143 @@
     return false;
   }
 
+  // 巫師寶箱專用獨立策略：一種尋寶率 → 補滿道具5/5 → 放逐兩種非尋寶率道具 → 專攻尋寶率。
+  // 注意：這裡的「道具 5/5」與升級頁的「技能 5/5」是兩套完全不同的欄位。
+  const treasureState={foundDiscovery:false,lastCount:null,banished:new Set(),
+    pendingExile:null,exileBroken:false,selectedDiscovery:null};
+  function treasureItemsInfo(panel){
+    const sources=[
+      panel.querySelector('#pk-items,#pk-item-sockets,#item-sockets,.pk-items,.pk-item-sockets'),
+      panel.querySelector('#pk-bar'),
+      panel
+    ].filter(Boolean);
+    let match=null;
+    for(const el of sources){
+      const text=String(el.textContent||'').normalize('NFKC');
+      match=text.match(/(?:道具|物品|items?)\s*(\d+)\s*\/\s*(\d+)/i);
+      if(match)break;
+    }
+    if(!match)return {known:false,count:null,max:null,full:false};
+    const count=Number(match[1]),max=Number(match[2]);
+    if(!Number.isFinite(count)||!Number.isFinite(max)||max!==5||count<0||count>max)
+      return {known:false,count:null,max:null,full:false};
+    if(treasureState.lastCount!==null&&count<treasureState.lastCount){
+      // 不同場次的道具欄從5/5回到0/5時，重置「曾選尋寶」及放逐紀錄。
+      treasureState.foundDiscovery=false;treasureState.banished.clear();
+      treasureState.pendingExile=null;treasureState.exileBroken=false;
+    }
+    treasureState.lastCount=count;
+    // 已裝備道具的描述若可由 UI 讀取，就同步確認尋寶率；不可從候選卡推斷已持有。
+    const owned=panel.querySelector('#pk-items,#pk-item-sockets,#item-sockets,.pk-items,.pk-item-sockets');
+    if(owned){
+      const nodes=[owned,...owned.querySelectorAll('[title],[aria-label],[data-name]')];
+      if(nodes.some(el=>{
+        const t=[el.getAttribute('title'),el.getAttribute('aria-label'),el.dataset?.name].filter(Boolean).join(' ');
+        return discoveryNameRegex.test(t);
+      }))treasureState.foundDiscovery=true;
+    }
+    return {known:true,count,max,full:count>=max};
+  }
+  function isDiscoveryTreasure(card){
+    const gain=discoveryGain(card);
+    if(gain!==null&&gain>0)return true;
+    const text=[read(card,'.pk-name'),read(card,'.pk-sub'),read(card,'.pk-lines')].join(' ');
+    return discoveryNameRegex.test(text)&&
+      !/(?:降低|減少|下降|削減)\s*(?:\d+(?:[.,]\d+)?\s*%?\s*)?尋寶率/i.test(text);
+  }
+  function recordTreasureChoice(selection){
+    if(selection?.chestDiscovery) {
+      treasureState.foundDiscovery=true;
+      diagnostic('寶箱：已確認至少1種尋寶率道具，接下來優先湊滿道具5/5');
+    }
+  }
+  function treasureActionText(btn){
+    return [btn.getAttribute('title'),btn.getAttribute('aria-label'),btn.textContent,
+      String(btn.dataset?.act||'')].filter(Boolean).join(' ').normalize('NFKC');
+  }
+  const treasureExilePattern=/放逐|排除|banish|exile/i;
+  function treasureBanishButton(card){
+    for(let parent=card.parentElement,depth=0;parent&&depth<6;parent=parent.parentElement,depth++){
+      if(parent.classList.contains('asking')||parent.closest('.pk-slot.asking'))return null;
+      if(parent.querySelectorAll('.pk-card').length>1)break;
+      const btn=[...parent.querySelectorAll('button,[role="button"],.pk-act')].find(el=>
+        el!==card&&!el.contains(card)&&shown(el)&&
+        !String(el.dataset?.act||'').startsWith('bar:')&&treasureExilePattern.test(treasureActionText(el)));
+      if(btn)return btn;
+    }
+    return null;
+  }
+  function treasureBanishRemaining(btn){
+    if(!btn)return null;
+    const parts=[
+      btn.getAttribute('title'),btn.getAttribute('aria-label'),btn.textContent,
+      btn.dataset?.remaining,btn.dataset?.count,btn.dataset?.uses,
+      btn.querySelector('.pk-count,.pk-badge,.pk-act-count,[class*="count"],[class*="badge"]')?.textContent,
+      btn.nextElementSibling?.textContent
+    ];
+    for(const p of parts){
+      const t=String(p??'').normalize('NFKC').replace(/\s+/g,'').trim();
+      const m=t.match(/(?:放逐|banish|exile)\s*[:：]?(\d+)/i);
+      if(m)return Number(m[1]);
+      if(/^\d{1,2}$/.test(t))return Number(t);
+    }
+    return null;
+  }
+  function treasureHandFingerprint(cards){
+    return cards.map(c=>cardName(c)+'§'+read(c,'.pk-lines')+'§'+isNew(c)).join('|');
+  }
+  function tryTreasureBanish(cards){
+    if(treasureState.banished.size>=2||treasureState.exileBroken)return false;
+    const old=treasureState.pendingExile,hand=treasureHandFingerprint(cards);
+    if(old){
+      const current=cards.map(c=>treasureBanishButton(c)).find(Boolean);
+      const rem=treasureBanishRemaining(current);
+      if((old.remaining!==null&&rem!==null&&rem<old.remaining)||
+         (old.remaining===null&&hand!==old.hand)){
+        treasureState.banished.add(old.name);
+        treasureState.pendingExile=null;
+        diagnostic('寶箱放逐成功 '+treasureState.banished.size+'/2：'+old.name);
+        return true; // 下一次 tick 再處理下一張，避免同一輪多次點擊。
+      }
+      if(performance.now()-old.at<2300){
+        diagnostic('等待寶箱放逐確認：'+old.name);return true;
+      }
+      treasureState.pendingExile=null;treasureState.exileBroken=true;
+      diagnostic('寶箱放逐點擊未確認成功，停止重複點擊；仍可繼續選卡');
+      return false;
+    }
+    // 僅放逐當前五格中已持有的非尋寶率道具強化；不放逐新道具，也不碰尋寶率。
+    const targets=cards.filter(card=>!isNew(card)&&!isDiscoveryTreasure(card)&&
+      !treasureState.banished.has(cardName(card))).map(card=>({card,btn:treasureBanishButton(card)}))
+      .filter(x=>x.btn);
+    if(!targets.length)return false;
+    const {card,btn}=targets[0],rem=treasureBanishRemaining(btn);
+    if(rem===0)return false;
+    treasureState.pendingExile={name:cardName(card),remaining:rem,
+      hand,at:performance.now()};
+    diagnostic('道具5/5，放逐非尋寶道具 '+cardName(card)+
+      '｜第'+(treasureState.banished.size+1)+'/2 次');
+    btn.click();
+    return true;
+  }
+  function rerollTreasureForDiscovery(panel,reason){
+    if(performance.now()<nextRerollAt)return true;
+    const btn=rerollButton(panel,'#pk-bar button,.pk-acts button,.pk-actions button',
+      /^(重抽整組|重抽全部|重抽卡組|rerolldeck|rerollall|重抽|重抽卡片|reroll|rerollcard)$/i);
+    if(!btn)return false;
+    const t=btn.textContent.normalize('NFKC'),old=attempts.get(btn);
+    attempts.set(btn,{text:t,count:old?.text===t?old.count+1:1});
+    nextRerollAt=performance.now()+1500;
+    diagnostic(reason+'｜重抽 '+t.trim());btn.click();return true;
+  }
+
   let lastDiagnostic = '等待遊戲畫面';
   let button = null, timer = null;
   function diagnostic(message) {
     if (message===lastDiagnostic) return;
     lastDiagnostic=message;
     if (button) button.title='Shift+1 切換；目前：'+message;
-    console.info('[HANS 巫師 v1.26]',message);
+    console.info('[HANS 巫師 v1.27]',message);
   }
   let nextRerollAt=0, pending=null, lastChoiceAt=0, lastChoiceKey='',choiceTries=0;
   const attempts=new WeakMap();
@@ -314,7 +444,8 @@
     if(id===lastChoiceKey) choiceTries++;
     else {lastChoiceKey=id;choiceTries=1;}
     if(choiceTries>3){diagnostic('選卡沒有反應，停止重複點擊：'+cardName(card));return;}
-    pending={card,name:cardName(card),reason:why,at:performance.now()};
+    pending={card,name:cardName(card),reason:why,at:performance.now(),
+      chestDiscovery:tick.inTreasure===true&&isDiscoveryTreasure(card)};
     lastChoiceAt=performance.now();
     diagnostic('選擇：'+cardName(card)+'｜'+why);
     card.click();
@@ -376,12 +507,14 @@
     }
     const panel=document.querySelector('#picker:not(.hidden):not(.closing)');
     if(!shown(panel)){
+      if(pending)recordTreasureChoice(pending);
       pending=null;lastChoiceKey='';choiceTries=0;
       diagnostic('等待升級／寶箱畫面');return;
     }
     const title=normalizeTitle(read(panel,'#pk-title')||document.querySelector('#pk-title')?.textContent||
       read(panel,'.pk-title')||read(panel,'h1'));
     const chest=/^(?:寶箱|寶箱選擇|treasure\s*chest)\s*!?$/i.test(title);
+    tick.inTreasure=chest;
     const level=/^(?:升\s*級|強化\s*技能|level\s*up|upgrade\s*(?:a\s*)?skill)\s*!?$/i.test(title);
     // Lv120後優先套用技能停止／寶箱成本上限。
     if(stopSelectionAtThreshold(panel,chest))return;
@@ -397,7 +530,7 @@
         (pending.card===card || (cardName(card)===pending.name && performance.now()-pending.at<4500));
       if(isOurs){
         const yes=asking.querySelector('[data-yes]');
-        if(shown(yes)){diagnostic('確認選卡：'+pending.name);yes.click();pending=null;
+        if(shown(yes)){diagnostic('確認選卡：'+pending.name);yes.click();recordTreasureChoice(pending);pending=null;
           lastChoiceKey='';choiceTries=0;}
       }else diagnostic('發現手動確認畫面，不自動干預');
       return;
@@ -406,23 +539,56 @@
     if(!cards.length){diagnostic('選卡視窗沒有可見的卡片');return;}
     // 一旦卡片集合改變，重置過去「點了沒反應」的保護次數。
     const hand=cards.map(c=>cardName(c)+'|'+read(c,'.pk-lines')+'|'+isNew(c)).join('||');
-    if(hand!==tick.lastHand){tick.lastHand=hand;lastChoiceKey='';choiceTries=0;pending=null;}
+    if(hand!==tick.lastHand){
+      if(pending)recordTreasureChoice(pending);
+      tick.lastHand=hand;lastChoiceKey='';choiceTries=0;pending=null;
+    }
     if(chest){
-      // 同分寶箱延續原版第二張優先的習慣；實際正加成仍優先比較數值。
-      const ordered=[...cards];if(ordered.length>1) [ordered[0],ordered[1]]=[ordered[1],ordered[0]];
-      const best=ordered.reduce((a,b)=>!a||betterChestCard(b,a)?b:a,null);
-      if(best && Number.isFinite(chestRank(best))){chooseCard(best,'寶箱：尋寶率／增益排序');return;}
-      if(performance.now()<nextRerollAt)return;
-      const btn=rerollButton(panel,'#pk-bar button,.pk-acts button,.pk-actions button',
-        /^(重抽整組|重抽全部|重抽卡組|rerolldeck|rerollall|重抽|重抽卡片|reroll|rerollcard)$/i);
-      if(btn){
-        const t=btn.textContent.normalize('NFKC'),old=attempts.get(btn);
-        attempts.set(btn,{text:t,count:old?.text===t?old.count+1:1});
-        nextRerollAt=performance.now()+1500;diagnostic('寶箱重抽：'+t.trim());btn.click();return;
+      const items=treasureItemsInfo(panel);
+      // 只以「道具 0/5～5/5」而不是人物等級或技能 5/5 判斷寶箱階段。
+      // 若新遊戲介面無法辨識道具數量，保守保留既有尋寶率排序，不提前放逐。
+      if(items.known){
+        const ordered=[...cards];if(ordered.length>1)[ordered[0],ordered[1]]=[ordered[1],ordered[0]];
+        const treasureCandidates=ordered.filter(isDiscoveryTreasure).sort((a,b)=>
+          chestRank(b)-chestRank(a)||discoveryTieRank(b)-discoveryTieRank(a));
+        if(!treasureState.foundDiscovery){
+          // 階段一：優先搶到一種確實含尋寶率的道具。
+          if(treasureCandidates.length){
+            chooseCard(treasureCandidates[0],'寶箱第1階段：先取得1種尋寶率');return;
+          }
+          if(rerollTreasureForDiscovery(panel,'尚未取得尋寶率，優先尋找'))return;
+          const backup=ordered.filter(c=>items.count!==4||!isNew(c))
+            .sort((a,b)=>chestRank(b)-chestRank(a))[0];
+          if(backup){chooseCard(backup,'尋寶率未出現：先選保底，不搶占最後一格');return;}
+          diagnostic('道具4/5但還沒有尋寶率，無重抽且全是新道具；暫停避免填滿最後一格');
+          return;
+        }
+        if(!items.full){
+          // 階段二：已拿到尋寶率後，速度優先；新道具先拿，盡快達5/5。
+          const fresh=ordered.filter(isNew).sort((a,b)=>chestRank(b)-chestRank(a))[0];
+          if(fresh){chooseCard(fresh,'寶箱第2階段：補滿道具 '+items.count+'/5');return;}
+          if(rerollTreasureForDiscovery(panel,'補滿道具5/5，尋找新道具'))return;
+          const fallback=ordered.sort((a,b)=>chestRank(b)-chestRank(a))[0];
+          if(fallback){chooseCard(fallback,'道具未滿，無重抽：先完成本箱選卡');return;}
+        }else{
+          // 階段三：道具5/5後，對兩個不同的非尋寶率道具執行放逐。
+          if(treasureState.banished.size<2&&tryTreasureBanish(cards))return;
+          const bestDiscovery=treasureCandidates[0];
+          if(bestDiscovery){chooseCard(bestDiscovery,
+            '寶箱第3階段：放逐 '+treasureState.banished.size+'/2，專攻尋寶率');return;}
+          if(rerollTreasureForDiscovery(panel,'道具5/5，尋找尋寶率強化'))return;
+          const fallback=ordered.sort((a,b)=>chestRank(b)-chestRank(a))[0];
+          if(fallback){chooseCard(fallback,'尋寶率未出現且無重抽：本箱保底');return;}
+        }
       }
-      // 無合格寶箱也不中斷，以原本的保底規則選一張。
+      // 舊版或未能讀到道具欄時，保留尋寶加成優先與既有寶箱重抽/保底路徑。
+      const ordered=[...cards];if(ordered.length>1)[ordered[0],ordered[1]]=[ordered[1],ordered[0]];
+      const best=ordered.reduce((a,b)=>!a||betterChestCard(b,a)?b:a,null);
+      if(best&&Number.isFinite(chestRank(best))){chooseCard(best,'寶箱：尋寶率／增益排序');return;}
+      if(rerollTreasureForDiscovery(panel,'寶箱沒有合格候選'))return;
       const backup=cards.reduce((a,b)=>!a||fallbackChestRank(b)>fallbackChestRank(a)?b:a,null);
-      if(backup)chooseCard(backup,'寶箱無可用重抽：保底');return;
+      if(backup)chooseCard(backup,'寶箱無可用重抽：保底');
+      return;
     }
     const info=slotInfo(panel);
     const {collecting,chosen}=bestSkillChoice(cards,info);
@@ -452,12 +618,12 @@
   }
   const safeTick=()=>{try{tick();}catch(error){
     diagnostic('腳本錯誤：'+String(error?.message||error));
-    console.error('[HANS 巫師 v1.26]',error);
+    console.error('[HANS 巫師 v1.27]',error);
   }};
   function enable(on){
     clearInterval(timer);
     timer=on?setInterval(safeTick,400):null;
-    button.textContent=label+'選技：'+(on?'開':'關')+' v1.26';
+    button.textContent=label+'選技：'+(on?'開':'關')+' v1.27';
     button.style.background=on?'#186442':'#384455';
     diagnostic(on?'已開啟，等待選卡畫面':'已關閉；按鈕或 Shift+1 開啟');
   }
@@ -466,7 +632,7 @@
     if(document.getElementById('hans-mage-autoskill-v123'))return;
     button=document.createElement('button');button.type='button';
     button.id='hans-mage-autoskill-v123';
-    button.dataset.hansScriptVersion='1.26';
+    button.dataset.hansScriptVersion='1.27';
     button.style.cssText='position:fixed;left:8px;bottom:84px;z-index:2147483647;color:white;border:1px solid white;border-radius:5px;padding:5px 8px;cursor:pointer';
     button.onclick=()=>{
       const on=timer===null;

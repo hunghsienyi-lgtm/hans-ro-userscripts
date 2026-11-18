@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜逐件裝備巡檢＋GS前十保護＋Discord完整紀錄
 // @namespace    https://ro.hans-webgametw.com/
-// @version      2.5.1
-// @description  V2.5.1：每步固定200ms；到商人先以空白鍵互動並自動開啟販賣頁；修正帶件數的一鍵販賣按鈕辨識與獨立對話測試。
+// @version      2.5.2
+// @description  V2.5.2：保護及商人販賣移除確認視窗；改由完整掃描及保護一致性檢查把關；為一鍵全流程準備。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -43,6 +43,8 @@
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const inv = () => document.querySelector('#cp-inventory');
   let records = [], plan = [], issues = [], running = false, aborted = false, scannedAt = 0;
+  let autoRunning=false, autoAbort=false;
+  let runMerchant=async()=>{throw Error('商人模組尚未初始化');};
   let scanSnapshot = null, latestDiscord = '尚未傳送';
   let scanMeta = {total:0, eligible:0, ignoredE:0};
   const HOOK_KEY = 'hans-ro-v2-discord-webhook';
@@ -67,7 +69,7 @@
   const pane = document.createElement('section');
   pane.id = ID;
   pane.innerHTML = `
-    <div class="hp-title"><strong title="按住這個藍色標題列就能拖曳">HANS｜傳說裝備前10 V2.5.1</strong><button id="hp-toggle" title="縮小／展開">−</button></div>
+    <div class="hp-title"><strong title="按住這個藍色標題列就能拖曳">HANS｜傳說裝備前10 V2.5.2</strong><button id="hp-toggle" title="縮小／展開">−</button></div>
     <div id="hp-body">
       <div class="hp-sub">主城按 C → 背包 → 全部；E 穿戴完全跳過。只保留傳說品質：法杖、頭上中下、披肩、飾品、鞋子、盾牌、衣服（鎧甲）。</div>
       <div class="hp-sub">逐件掃描非 E：只對傳說法杖及其餘指定部位傳說裝備排 GS 前10。其他品質與非杖武器不保留；先預覽再手動確認。Discord只傳摘要。</div>
@@ -499,9 +501,9 @@
   async function apply() {
     if (running || !scannedAt || issues.length || !scanSnapshot?.complete || scanSnapshot.version !== POLICY_VERSION) return;
     const tasks = [...plan.filter(x=>x.action==='保護'),...plan.filter(x=>x.action==='取消保護')];
-    if(tasks.some(x=>x.equipped)) {status('安全阻擋：規劃清單混入 E 裝備，請重新掃描。');return;}
-    if (!tasks.length) {status('所有非 E 裝備已符合保護規則，不需要修改。');return;}
-    if (!confirm(`HANS 裝備保護管理：\nE 完全不動。只保留「傳說」品質：法杖、頭上中下、披肩、飾品、鞋子、盾牌、鎧甲各 GS 前 ${LIMIT} 件。\n其他品質及非杖武器不留（已保護的會取消保護）。\n將「保護」${tasks.filter(x=>x.action==='保護').length} 件、「取消保護」${tasks.filter(x=>x.action==='取消保護').length} 件。\n\n只調整保護狀態，不販賣、不丟棄。確定執行？`))return;
+    if(tasks.some(x=>x.equipped)) {status('安全阻擋：規劃清單混入 E 裝備，請重新掃描。');return false;}
+    if (!tasks.length) {status('所有非 E 裝備已符合保護規則，不需要修改。');return true;}
+    // 使用者已授權：免確認；每件裝備仍逐件驗證 ID/GS/Tier/品質/E。
     running=true;aborted=false;controls();
     let completed=0;
     const oldSelected = inv()?.querySelector('.item-cell.sel');
@@ -545,12 +547,14 @@
       }
       scannedAt=0; scanSnapshot=null;
       $('hp-discord').textContent='Discord：保護狀態剛修改，舊快照已失效；請重新掃描再傳送。';
-      status(`執行完成：${completed} 件。E 裝備未點選，未修改；沒有販賣或丟棄。\n建議重新掃描核對保護狀態。`);
+      status(`保護狀態調整完成：${completed} 件；E 穿戴裝備完全不動。`);
+      return true;
     } catch(e) {
       scannedAt=0; scanSnapshot=null;
       $('hp-discord').textContent='Discord：保護操作已嘗試，請重新掃描取得目前狀態。';
       status(`已停止：完成 ${completed}/${tasks.length} 件。\n${String(e.message||e)}\n請重新掃描後才可繼續。`);
       console.warn('[HANS 前十保護]',e);
+      return false;
     } finally {
       if(original && itemCell(original) && !equipped(itemCell(original))) {try{itemCell(original).click();}catch{}}
       running=false;controls();
@@ -600,7 +604,7 @@
     const buttons={go:$r('hp-route-go'),talk:$r('hp-route-talk'),back:$r('hp-route-return'),full:$r('hp-route-run'),
       sell:$r('hp-route-sell'),stop:$r('hp-route-stop'),keys:$r('hp-route-keys')};
     let busy=false,stopped=false,pressed=null;
-    const isReady=()=>!busy&&!running;
+    const isReady=()=>!busy&&!running&&!autoRunning;
     const refresh=()=>{
       for(const key of ['go','talk','back','full','sell'])buttons[key].disabled=!isReady();
       buttons.stop.disabled=!busy;
@@ -771,23 +775,30 @@
       }
       return null;
     }
-    async function sellNow(){
-      if(scanSnapshot?.complete&&scanSnapshot.version===POLICY_VERSION){
-        const unprotected=scanSnapshot.items.filter(x=>x.shouldProtect&&!x.protected);
-        if(unprotected.length)throw Error('還有 '+unprotected.length+' 件前十傳說裝備未保護。請先完成裝備保護並重新掃描。');
+    function verifyProtectionForSale(){
+      if(!scanSnapshot?.complete || scanSnapshot.version!==POLICY_VERSION ||
+        scanSnapshot.items.length!==scanSnapshot.eligibleCount ||
+        scanSnapshot.eligibleCount+scanSnapshot.skippedEquippedCount!==scanSnapshot.expectedCount ||
+        scanSnapshot.items.some(r=>r.equipped)){
+        throw Error('掃描資料不完整，禁止販賣。請先完成逐件掃描及自動保護。');
       }
+      const invalid=plan.filter(r=>r.action!=='保持');
+      if(invalid.length)throw Error('有 '+invalid.length+' 件保護狀態未符合規則，禁止販賣。');
+      if(scanSnapshot.items.some(r=>r.shouldProtect&&!r.protected))
+        throw Error('有傳說前十名裝備尚未保護，禁止販賣。');
+    }
+    async function sellNow(){
+      verifyProtectionForSale();
       const p=panel();
       if(!p)throw Error('找不到商人的「販賣」頁，請先開啟。');
       const counts=await setQuality(p);
       const total=Object.values(counts).every(Number.isFinite)?Object.values(counts).reduce((a,b)=>a+b,0):null;
-      const detail=GRADES.map(g=>g+' '+(counts[g]??'?')).join('、');
+      if(total===null)throw Error('無法驗證五種品質數量，停止販賣。');
       if(p.button.disabled||total===0){
         inform('五品質已勾選，但目前沒有可販賣裝備（或按鈕不可用）；未販賣。');
         return {empty:true};
       }
-      const accepted=window.confirm('準備實際販賣遊戲裝備：\\n'+detail+
-        '\\n\\n將依序按「一鍵販賣」→「全部賣掉」。\\n所有未受遊戲保護的傳說裝備也可能被賣掉，無法復原。確認執行？');
-      if(!accepted)throw Error('已取消，未按販賣按鈕');
+      // 已明確授權免確認：完整掃描／保護驗證成功才操作一鍵販賣。
       activeCheck();
       const current=panel();
       if(!current||current.button!==p.button||p.button.disabled)throw Error('販賣介面已變更，停止');
@@ -797,7 +808,7 @@
       for(const name of ['包含已插卡','包含已精煉']){
         if(checkboxFor(current.root,name)?.checked!==false)throw Error('安全排除選項狀態異常：'+name);
       }
-      inform('已確認販賣，準備按「一鍵販賣」...');
+      inform('已驗證保護與品質，準備按「一鍵販賣」...');
       p.button.click();
       const all=await waitSellAllButton();
       if(!all)throw Error('按下一鍵販賣後，沒有找到「全部賣掉」；請人工查看，不會自動返程。');
@@ -820,8 +831,8 @@
       if(btn&&!btn.disabled){btn.click();await sleep(500);}
       return !shopOpen();
     }
-    async function operate(action){
-      if(!isReady())return;
+    async function operate(action,internal=false){
+      if((!internal&&!isReady())||busy||running)return null;
       busy=true;stopped=false;refresh();
       try{
         if(action==='talk'){
@@ -846,6 +857,7 @@
           return;
         }
         if(action==='full'){
+          verifyProtectionForSale();
           if(!shopOpen()){
             await walk(false);
             if(!await openShop())throw Error('已走到商人附近，但未能開啟販賣頁，請手動開啟後按「商人已開：販賣」。');
@@ -854,10 +866,13 @@
           if(!await closeShop())throw Error('商人視窗沒有關閉，已停止返程，請手動關閉。');
           await walk(true);
           inform((result.empty?'沒有可賣裝備；':'已按下全部賣掉；')+'已送出 ←13、↑9，請核對返回位置。');
+          return {done:true,sale:result,returned:true};
         }
       }catch(e){
         inform('停止：'+String(e?.message||e));
         console.warn('[HANS 礦石商人固定路線]',e);
+        if(internal)throw e;
+        return null;
       }finally{release();busy=false;refresh();}
     }
     buttons.go.onclick=()=>operate('go');
@@ -865,7 +880,9 @@
     buttons.back.onclick=()=>operate('back');
     buttons.sell.onclick=()=>operate('sell');
     buttons.full.onclick=()=>operate('full');
-    buttons.stop.onclick=()=>{stopped=true;release();inform('已請求停止；鬆開所有方向鍵。');};
+    buttons.stop.onclick=()=>{stopped=true;autoAbort=true;aborted=true;release();inform('已請求停止；鬆開所有方向鍵。');};
+    document.addEventListener('hans-merchant-stop',()=>{stopped=true;release();});
+    runMerchant=operate;
     refresh();
   }
 

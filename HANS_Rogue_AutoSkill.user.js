@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 盜賊→流氓｜六核心自動選技＋優先放逐＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.1.0
-// @description  流氓v1.1：刀扇有就點；六核心（含普攻第一招）未齊前只選技／重抽、絕不放逐；全部取得後才優先放逐影步／背刺及刀扇外技能；寶箱沿用尋寶率優先。
+// @version      1.1.1
+// @description  流氓v1.1.1：刀扇有就點；六招未齊只補技／重抽且嚴禁放逐；六招齊後才放逐非刀扇。加強普攻取得追蹤及跨場次重置；寶箱維持尋寶率優先。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
 // @run-at       document-idle
@@ -15,7 +15,7 @@
   const id = 'hans-rogue-autoskill-v100';
   if (document.getElementById(id)) return;
   const label = '流氓';
-  const version = '1.1.0';
+  const version = '1.1.1';
   const potion = [/傷害藥水|damage potion|potion of damage/i, /範圍藥水|area potion|potion of area/i];
   const normalize = s => String(s||'').normalize('NFKC').replace(/\s+/g,' ').trim();
   const read = (el,selector) => normalize(el?.querySelector(selector)?.textContent||'');
@@ -66,7 +66,7 @@
   // 只在本次運行中確認選取成功後記錄，不沿用前一場；避免錯誤提前放逐。
   let basicLearned=false, lastOwnedCount=null;
   function recordSelected(picked){
-    if(picked?.skillId==='basic'){
+    if(picked?.skillId==='basic' && !basicLearned){
       basicLearned=true;
       diagnostic('已取得普攻第一招；納入六招完成判斷');
     }
@@ -84,7 +84,7 @@
       for(const s of skills) if(s.re.test(data)||s.slot.test(data)) owned.add(s.id);
     }
     // 觀測到從已取得多招回到全空格，可視為新場次，清除上場的普攻紀錄。
-    if(lastOwnedCount!==null && lastOwnedCount>=3 && owned.size<=1){
+    if(lastOwnedCount!==null && lastOwnedCount>=2 && owned.size===0){
       basicLearned=false;
       diagnostic('偵測到新場次空技能欄，重置普攻紀錄；重新湊六招');
     }

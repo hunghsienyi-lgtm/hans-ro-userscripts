@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.9.8
-// @description  v0.9.8：聖誕節與元宵燈會特殊關卡正式加入一至六周目；沿用各周目地圖命名、獨立選關、現場解鎖查驗及自動關卡掃描。
+// @version      0.9.9
+// @description  v0.9.9：修正節慶關卡隱藏在選單底部：每個周目將「聖誕節」「元宵燈會」置頂，明確顯示節慶圖示，保留遊戲解鎖驗證及全部其他關卡。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -27,7 +27,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5200, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.9.8';
+  const VERSION = '0.9.9';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -808,14 +808,26 @@
     const world=chosenWorld(),before=picker.value;
     const entries=Object.entries(STAGES).filter(([,v])=>v.world===world);
     const lvl=v=>Number((String(v.level||'').match(/^(\d+)/)||[])[1]||99999);
-    entries.sort((a,b)=>lvl(a[1])-lvl(b[1])||a[1].name.localeCompare(b[1].name));
+    // 節慶關卡初始沒有 Lv 範圍，舊版一律被排到選單底部，容易誤以為不存在。
+    // 把這兩個關卡固定放在每一周目的最上方，其他關卡沿用原本 Lv 順序。
+    const seasonalOrder=v=>{
+      const base=baseStageName(v.name);
+      if(base==='聖誕節')return 0;
+      if(base==='元宵燈會')return 1;
+      return 2;
+    };
+    entries.sort((a,b)=>seasonalOrder(a[1])-seasonalOrder(b[1])||
+      lvl(a[1])-lvl(b[1])||a[1].name.localeCompare(b[1].name));
     picker.replaceChildren();
     const blank=document.createElement('option');blank.value='';
     blank.textContent=entries.length?'選擇'+WORLD_NAMES[world]+'關卡':'目前無可選關卡';
     picker.append(blank);
     for(const [key,st] of entries){
       const opt=document.createElement('option');opt.value=key;opt.disabled=st.unlocked===false;
-      opt.textContent=st.name+(st.level?' · Lv '+st.level:'')+(st.unlocked===false?'（未解鎖）':st.unlocked===null?'（待確認）':'');
+      const seasonalBase=baseStageName(st.name);
+      const prefix=seasonalBase==='聖誕節'?'🎄 ':seasonalBase==='元宵燈會'?'🏮 ':'';
+      opt.textContent=prefix+st.name+(st.level?' · Lv '+st.level:'')+
+        (st.unlocked===false?'（未解鎖）':st.unlocked===null?'（待確認）':'');
       picker.append(opt);
     }
     const preferred=(STAGES[before]?.world===world?before:'')||worldSelections[String(world)]||'';

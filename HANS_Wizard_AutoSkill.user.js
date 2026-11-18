@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 二轉巫師｜五核心自動選技＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.28
-// @description  v1.28：選技能及寶箱加速版，選卡輪詢400→200ms、縮短點擊及重抽間隔；保留選卡確認、防連點、禁招及Lv120/7000Z規則。
+// @version      1.29
+// @description  v1.29：修正未取得尋寶率就誤放逐：只有已持有道具的正尋寶率詞條，或確認新尋寶道具選取後「道具格數真的增加」，才能進放逐；不再因文字/點擊假確認。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
 // @run-at       document-idle
@@ -287,52 +287,99 @@
 
   // 巫師寶箱專用獨立策略：一種尋寶率 → 補滿道具5/5 → 放逐兩種非尋寶率道具 → 專攻尋寶率。
   // 注意：這裡的「道具 5/5」與升級頁的「技能 5/5」是兩套完全不同的欄位。
-  const treasureState={foundDiscovery:false,lastCount:null,banished:new Set(),
-    pendingExile:null,exileBroken:false,selectedDiscovery:null};
+  // 寶箱尋寶率策略的唯一權威狀態：
+  // 1) 已持有道具的 tooltip/屬性確實顯示「正數尋寶率」；
+  // 2) 新尋寶道具被確認選取，且道具欄從原數量「實際增加1格」。
+  // 僅有候選卡文字、選卡點擊、5/5 或上輪殘留狀態，都不算已取得！
+  const treasureState={
+    foundDiscovery:false,lastCount:null,banished:new Set(),pendingExile:null,
+    exileBroken:false,pendingDiscoveryProof:null,verifiedBy:''
+  };
+  function positiveDiscoveryValue(text){
+    const t=String(text||'').normalize('NFKC');
+    if(!discoveryNameRegex.test(t))return null;
+    let best=null;
+    for(const pattern of discoveryPatterns){
+      for(const match of t.matchAll(pattern)){
+        const before=t.slice(Math.max(0,match.index-12),match.index);
+        const matchedText=match[0];
+        if(/降低|減少|下降|削減|reduce|decrease|lower|penalty/i.test(before+matchedText))continue;
+        const val=Number(match[1].replace(/\s/g,'').replace(',','.'));
+        if(Number.isFinite(val)&&val>0)best=Math.max(best??0,val);
+      }
+    }
+    return best;
+  }
+  function ownedDiscoveryConfirmed(panel){
+    // 只從已持有的道具欄查證，不讀三張候選卡或它們的 tooltip。
+    const owned=panel.querySelector('#pk-items,#pk-item-sockets,#item-sockets,.pk-items,.pk-item-sockets');
+    if(!owned)return false;
+    const nodes=[...owned.querySelectorAll('[title],[aria-label],[data-name],[data-effect]')];
+    return nodes.some(el=>{
+      if(el.closest('.pk-card,.pk-slot'))return false;
+      const t=[el.getAttribute('title'),el.getAttribute('aria-label'),
+        el.getAttribute('data-name'),el.getAttribute('data-effect')]
+        .filter(Boolean).join(' ');
+      return positiveDiscoveryValue(t)!==null;
+    });
+  }
   function treasureItemsInfo(panel){
     const sources=[
       panel.querySelector('#pk-items,#pk-item-sockets,#item-sockets,.pk-items,.pk-item-sockets'),
-      panel.querySelector('#pk-bar'),
-      panel
+      panel.querySelector('#pk-bar'),panel
     ].filter(Boolean);
     let match=null;
     for(const el of sources){
-      const text=String(el.textContent||'').normalize('NFKC');
-      match=text.match(/(?:道具|物品|items?)\s*(\d+)\s*\/\s*(\d+)/i);
+      match=String(el.textContent||'').normalize('NFKC')
+        .match(/(?:道具|物品|items?)\s*(\d+)\s*\/\s*(\d+)/i);
       if(match)break;
     }
-    if(!match)return {known:false,count:null,max:null,full:false};
+    if(!match)return {known:false,count:null,max:null,full:false,verified:treasureState.foundDiscovery};
     const count=Number(match[1]),max=Number(match[2]);
     if(!Number.isFinite(count)||!Number.isFinite(max)||max!==5||count<0||count>max)
-      return {known:false,count:null,max:null,full:false};
+      return {known:false,count:null,max:null,full:false,verified:treasureState.foundDiscovery};
     if(treasureState.lastCount!==null&&count<treasureState.lastCount){
-      // 不同場次的道具欄從5/5回到0/5時，重置「曾選尋寶」及放逐紀錄。
+      // 不同場次重新從0/5開始時必須解除舊局的尋寶／放逐記錄。
       treasureState.foundDiscovery=false;treasureState.banished.clear();
       treasureState.pendingExile=null;treasureState.exileBroken=false;
+      treasureState.pendingDiscoveryProof=null;treasureState.verifiedBy='';
+      diagnostic('新場次／道具格數重置｜重新確認尋寶率，禁止沿用上一局');
     }
     treasureState.lastCount=count;
-    // 已裝備道具的描述若可由 UI 讀取，就同步確認尋寶率；不可從候選卡推斷已持有。
-    const owned=panel.querySelector('#pk-items,#pk-item-sockets,#item-sockets,.pk-items,.pk-item-sockets');
-    if(owned){
-      const nodes=[owned,...owned.querySelectorAll('[title],[aria-label],[data-name]')];
-      if(nodes.some(el=>{
-        const t=[el.getAttribute('title'),el.getAttribute('aria-label'),el.dataset?.name].filter(Boolean).join(' ');
-        return discoveryNameRegex.test(t);
-      }))treasureState.foundDiscovery=true;
+    if(ownedDiscoveryConfirmed(panel)){
+      treasureState.foundDiscovery=true;treasureState.verifiedBy='owned-item-positive-stat';
+      treasureState.pendingDiscoveryProof=null;
+    }else if(treasureState.pendingDiscoveryProof){
+      const proof=treasureState.pendingDiscoveryProof;
+      // 只核實「此前確實選到正尋寶率的新道具」而且持有格數增加；
+      // 沒有增格、點擊未成功或已過期，一律不誤判已取得。
+      if(count===proof.beforeCount+1&&performance.now()-proof.at<12000){
+        treasureState.foundDiscovery=true;treasureState.verifiedBy='confirmed-new-item-count';
+        treasureState.pendingDiscoveryProof=null;
+        diagnostic('尋寶率已確認取得｜道具 '+proof.beforeCount+'/5 → '+count+'/5，現在才允許補滿五格');
+      }else if(count>proof.beforeCount+1||performance.now()-proof.at>=12000){
+        treasureState.pendingDiscoveryProof=null;
+        diagnostic('尋寶率選取無法核實｜仍禁止放逐');
+      }
     }
-    return {known:true,count,max,full:count>=max};
+    return {known:true,count,max,full:count>=max,verified:treasureState.foundDiscovery};
   }
   function isDiscoveryTreasure(card){
-    const gain=discoveryGain(card);
-    if(gain!==null&&gain>0)return true;
-    const text=[read(card,'.pk-name'),read(card,'.pk-sub'),read(card,'.pk-lines')].join(' ');
-    return discoveryNameRegex.test(text)&&
-      !/(?:降低|減少|下降|削減)\s*(?:\d+(?:[.,]\d+)?\s*%?\s*)?尋寶率/i.test(text);
+    // 只能用「確實增加正數尋寶率」判斷，不接受只有名稱出現尋寶率。
+    return discoveryGain(card)!==null&&discoveryGain(card)>0;
   }
   function recordTreasureChoice(selection){
-    if(selection?.chestDiscovery) {
-      treasureState.foundDiscovery=true;
-      diagnostic('寶箱：已確認至少1種尋寶率道具，接下來優先湊滿道具5/5');
+    // 選卡確認/換手/關閉視窗並非「取得道具」的單獨證據。
+    // 等下一次道具格數確實+1才准將 foundDiscovery 改為 true。
+    if(selection?.chestNewDiscovery===true&&
+       Number.isFinite(selection?.chestBeforeCount)&&selection.chestBeforeCount<5){
+      treasureState.pendingDiscoveryProof={
+        name:selection.name,beforeCount:selection.chestBeforeCount,at:performance.now()
+      };
+      diagnostic('已選正尋寶率道具：'+selection.name+'｜等待持有道具格數增加確認');
+    }else if(selection?.reason?.includes('寶箱')&&treasureState.pendingDiscoveryProof){
+      // 下一張卡選了別的道具，不再用之前未核實的選擇冒充尋寶率。
+      treasureState.pendingDiscoveryProof=null;
     }
   }
   function treasureActionText(btn){
@@ -371,6 +418,15 @@
     return cards.map(c=>cardName(c)+'§'+read(c,'.pk-lines')+'§'+isNew(c)).join('|');
   }
   function tryTreasureBanish(cards){
+    // 最重要防線：沒有從「實際持有」驗證正尋寶率，絕不執行任何寶箱放逐。
+    if(!treasureState.foundDiscovery){
+      diagnostic('尋寶率尚未確認持有｜禁止放逐（即使道具已5/5）');
+      return false;
+    }
+    if(treasureState.lastCount!==5){
+      diagnostic('道具未5/5｜禁止寶箱放逐');
+      return false;
+    }
     if(treasureState.banished.size>=2||treasureState.exileBroken)return false;
     const old=treasureState.pendingExile,hand=treasureHandFingerprint(cards);
     if(old){
@@ -421,7 +477,7 @@
     if (message===lastDiagnostic) return;
     lastDiagnostic=message;
     if (button) button.title='Shift+1 切換；目前：'+message;
-    console.info('[HANS 巫師 v1.28]',message);
+    console.info('[HANS 巫師 v1.29]',message);
   }
   let nextRerollAt=0, pending=null, lastChoiceAt=0, lastChoiceKey='',choiceTries=0;
   const attempts=new WeakMap();
@@ -445,7 +501,9 @@
     else {lastChoiceKey=id;choiceTries=1;}
     if(choiceTries>3){diagnostic('選卡沒有反應，停止重複點擊：'+cardName(card));return;}
     pending={card,name:cardName(card),reason:why,at:performance.now(),
-      chestDiscovery:tick.inTreasure===true&&isDiscoveryTreasure(card)};
+      // 只有正數尋寶率的「新道具」，且選擇後格數增加才能算入帳。
+      chestNewDiscovery:tick.inTreasure===true&&isNew(card)&&isDiscoveryTreasure(card),
+      chestBeforeCount:tick.inTreasure===true?treasureState.lastCount:null};
     lastChoiceAt=performance.now();
     diagnostic('選擇：'+cardName(card)+'｜'+why);
     card.click();
@@ -571,7 +629,17 @@
           const fallback=ordered.sort((a,b)=>chestRank(b)-chestRank(a))[0];
           if(fallback){chooseCard(fallback,'道具未滿，無重抽：先完成本箱選卡');return;}
         }else{
-          // 階段三：道具5/5後，對兩個不同的非尋寶率道具執行放逐。
+          // 階段三：只有「已確認持有正尋寶率」才准在5/5放逐兩個不同道具。
+          // 即使沒有尋寶率也滿5/5，仍只找尋寶率，不浪費任何放逐。
+          if(!treasureState.foundDiscovery){
+            diagnostic('道具5/5但沒有確認持有尋寶率｜嚴禁放逐，先搜尋尋寶率');
+            if(treasureCandidates[0]){chooseCard(treasureCandidates[0],'道具滿格但未持有尋寶率：補尋寶詞條');return;}
+            if(rerollTreasureForDiscovery(panel,'道具5/5但尚無尋寶率，找正加成'))return;
+            const safeFallback=ordered.filter(c=>!isNew(c))
+              .sort((a,b)=>chestRank(b)-chestRank(a))[0];
+            if(safeFallback){chooseCard(safeFallback,'道具滿格未持有尋寶率：不放逐，保底');return;}
+            return;
+          }
           if(treasureState.banished.size<2&&tryTreasureBanish(cards))return;
           const bestDiscovery=treasureCandidates[0];
           if(bestDiscovery){chooseCard(bestDiscovery,
@@ -618,12 +686,12 @@
   }
   const safeTick=()=>{try{tick();}catch(error){
     diagnostic('腳本錯誤：'+String(error?.message||error));
-    console.error('[HANS 巫師 v1.28]',error);
+    console.error('[HANS 巫師 v1.29]',error);
   }};
   function enable(on){
     clearInterval(timer);
     timer=on?setInterval(safeTick,200):null;
-    button.textContent=label+'選技：'+(on?'開':'關')+' v1.28';
+    button.textContent=label+'選技：'+(on?'開':'關')+' v1.29';
     button.style.background=on?'#186442':'#384455';
     diagnostic(on?'已開啟，等待選卡畫面':'已關閉；按鈕或 Shift+1 開啟');
   }
@@ -632,7 +700,7 @@
     if(document.getElementById('hans-mage-autoskill-v123'))return;
     button=document.createElement('button');button.type='button';
     button.id='hans-mage-autoskill-v123';
-    button.dataset.hansScriptVersion='1.28';
+    button.dataset.hansScriptVersion='1.29';
     button.style.cssText='position:fixed;left:8px;bottom:84px;z-index:2147483647;color:white;border:1px solid white;border-radius:5px;padding:5px 8px;cursor:pointer';
     button.onclick=()=>{
       const on=timer===null;

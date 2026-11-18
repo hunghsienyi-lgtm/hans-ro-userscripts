@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜逐件裝備巡檢＋GS前十保護＋Discord完整紀錄
 // @namespace    https://ro.hans-webgametw.com/
-// @version      2.6.2
-// @description  V2.6.2：第二輪掃描保護完成後點「回到普隆德拉」，驗證回到主城才移動到商人；修正回城按鈕文字比對。
+// @version      2.6.3
+// @description  V2.6.3：商人一鍵販賣→全部賣掉→自動尋找商人視窗底部「關閉」→確認關閉→左13上9返回原點，無確認彈窗。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -69,10 +69,10 @@
   const pane = document.createElement('section');
   pane.id = ID;
   pane.innerHTML = `
-    <div class="hp-title"><strong title="按住這個藍色標題列就能拖曳">HANS｜一鍵清背包 V2.6.2</strong><button id="hp-toggle" title="縮小／展開">−</button></div>
+    <div class="hp-title"><strong title="按住這個藍色標題列就能拖曳">HANS｜一鍵清背包 V2.6.3</strong><button id="hp-toggle" title="縮小／展開">−</button></div>
     <div id="hp-body">
       <div class="hp-sub">主城按 C → 背包 → 全部；E 穿戴完全跳過。只保留傳說品質：法杖、頭上中下、披肩、飾品、鞋子、盾牌、衣服（鎧甲）。</div>
-      <div class="hp-sub">一鍵流程：非 E 掃描→自動保護傳說前十→複掃驗證→按「回到普隆德拉」→商人五品質販賣→返程與DC摘要；免確認，異常停止。</div>
+      <div class="hp-sub">一鍵流程：非 E 掃描→保護前十→複掃→回普隆德拉→商人勾五品質→一鍵販賣→全部賣掉→關閉商人視窗→原路返回。異常停止。</div>
       <div class="hp-bar"><button id="hp-full-cycle" style="background:#1b775a;color:white;font-weight:700;font-size:13px">▶ 一鍵全部｜掃描・保護・販賣・返程</button></div>
       <div class="hp-sub">從主城固定原點啟動；不詢問保護／販賣同意。出現異常會停止後續操作。</div>
       <div class="hp-bar"><button id="hp-scan">單獨掃描非 E</button><button id="hp-scan-dc">掃描＋傳 DC</button></div>
@@ -820,19 +820,61 @@
       // 只按唯一可見且文字完全相符的確認按鈕，不推測或代按其他選項。
       inform('找到確認視窗，按下「全部賣掉」...');
       all.click();
-      await sleep(650);
-      if(allSellButtons().length)throw Error('按下「全部賣掉」後視窗尚未關閉，請人工確認；不會返程。');
-      inform('已操作「全部賣掉」。待確認遊戲結果；若有其他確認視窗請人工處理。');
+      // 等遊戲消除「全部賣掉」確認框；不能用固定 650ms 誤判動畫延遲。
+      const confirmedBy=Date.now()+5000;
+      while(allSellButtons().length && Date.now()<confirmedBy){
+        activeCheck();
+        await sleep(160);
+      }
+      if(allSellButtons().length)throw Error('按「全部賣掉」後確認視窗仍在，停止後續關閉與返程。');
+      inform('已按「全部賣掉」，正在關閉礦石商人視窗...');
       return {empty:false};
     }
-    async function closeShop(){
-      const p=panel();if(!p)return true;
-      const btn=[...p.root.querySelectorAll('button')].find(b=>{
-        const label=norm(textOf(b)),title=norm(b.getAttribute('title')||b.getAttribute('aria-label')||'');
-        return /^(關閉|✕|×|X)$/iu.test(label)||/^(關閉|關閉商人)$/u.test(title);
+    // 「關閉」在商人視窗底部，往往不在一鍵販賣設定區 p.root 的子節點內。
+    // 從設定區逐層往外找同時包含「礦石商人」標題和唯一「關閉」按鈕的最小商人視窗。
+    function merchantCloseButton(p){
+      const buttons=[...document.querySelectorAll('button,[role="button"],input[type="button"]')]
+        .filter(b=>!pane.contains(b)&&isVisible(b)&&!b.disabled);
+      const closers=buttons.filter(b=>{
+        const label=norm(b.value||textOf(b));
+        const title=norm(b.getAttribute('title')||b.getAttribute('aria-label')||'');
+        return /^(關閉|×|✕|X)$/iu.test(label)||/^(關閉|關閉商人)$/u.test(title);
       });
-      if(btn&&!btn.disabled){btn.click();await sleep(500);}
-      return !shopOpen();
+      for(let ancestor=p.root;ancestor&&ancestor!==document.body;ancestor=ancestor.parentElement){
+        if(!ancestor.contains(p.button))continue;
+        const text=textOf(ancestor);
+        if(text.length>30000)break;
+        if(!text.includes('礦石商人'))continue;
+        const local=closers.filter(b=>ancestor.contains(b));
+        if(local.length===1)return local[0];
+        if(local.length>1){
+          const explicit=local.filter(b=>norm(b.value||textOf(b))==='關閉');
+          if(explicit.length===1)return explicit[0];
+          throw Error('商人視窗出現多個關閉按鈕，停止以免誤關其他介面。');
+        }
+      }
+      return null;
+    }
+    async function closeShop(){
+      activeCheck();
+      if(allSellButtons().length)throw Error('確認賣裝的視窗還在，不能關閉商人。');
+      const p=panel();
+      if(!p)return true; // 商人已自行消失
+      const btn=merchantCloseButton(p);
+      if(!btn)throw Error('找不到礦石商人視窗底部的「關閉」按鈕，禁止返程。');
+      inform('正在按礦石商人視窗「關閉」...');
+      btn.click();
+      const until=Date.now()+5000;
+      while(Date.now()<until){
+        activeCheck();
+        if(!shopOpen()){
+          inform('商人視窗已關閉，準備左13下、上9下原路返回...');
+          await sleep(300);
+          return true;
+        }
+        await sleep(140);
+      }
+      throw Error('已按「關閉」，但仍看到商人視窗，禁止移動。');
     }
     async function operate(action,internal=false){
       if((!internal&&!isReady())||busy||running)return null;

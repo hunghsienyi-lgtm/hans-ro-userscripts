@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜逐件裝備巡檢＋GS前十保護＋Discord完整紀錄
 // @namespace    https://ro.hans-webgametw.com/
-// @version      2.6.3
-// @description  V2.6.3：商人一鍵販賣→全部賣掉→自動尋找商人視窗底部「關閉」→確認關閉→左13上9返回原點，無確認彈窗。
+// @version      2.6.4
+// @description  V2.6.4：修正商人品質數量在一鍵販賣按鈕上方造成的誤判；勾選、販賣、全部賣掉、關閉各步驟延長等待，返回原點。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -69,7 +69,7 @@
   const pane = document.createElement('section');
   pane.id = ID;
   pane.innerHTML = `
-    <div class="hp-title"><strong title="按住這個藍色標題列就能拖曳">HANS｜一鍵清背包 V2.6.3</strong><button id="hp-toggle" title="縮小／展開">−</button></div>
+    <div class="hp-title"><strong title="按住這個藍色標題列就能拖曳">HANS｜一鍵清背包 V2.6.4</strong><button id="hp-toggle" title="縮小／展開">−</button></div>
     <div id="hp-body">
       <div class="hp-sub">主城按 C → 背包 → 全部；E 穿戴完全跳過。只保留傳說品質：法杖、頭上中下、披肩、飾品、鞋子、盾牌、衣服（鎧甲）。</div>
       <div class="hp-sub">一鍵流程：非 E 掃描→保護前十→複掃→回普隆德拉→商人勾五品質→一鍵販賣→全部賣掉→關閉商人視窗→原路返回。異常停止。</div>
@@ -737,31 +737,49 @@
         (label.htmlFor?document.getElementById(label.htmlFor):null);
       return checkbox?.type==='checkbox'?checkbox:null;
     };
+    // 遊戲的五種品質與數量顯示在「一鍵販賣」上方，不能從按鈕文字後面截取。
+    // 以品質 label 和「一鍵販賣（N 件・點數）」分別驗證數量，避免掃不到就跳過販賣。
     function countsFrom(p){
-      const content=(p.root.innerText||p.root.textContent||'').replace(/\s+/g,'');
-      const start=content.indexOf('一鍵販賣'),part=content.slice(Math.max(0,start),Math.max(0,start)+500);
-      const out={};
-      for(const g of GRADES){
-        const hit=part.match(new RegExp(g+'(\\d+)','u'));
-        out[g]=hit?Number(hit[1]):null;
+      const labels=[...p.root.querySelectorAll('label')];
+      const counts={};
+      for(const grade of GRADES){
+        const re=new RegExp('^'+grade+'\\s*([\\d,]+)\\s*$','u');
+        const found=labels.map(x=>norm(textOf(x))).map(x=>x.match(re)).find(Boolean);
+        counts[grade]=found?Number(found[1].replace(/,/g,'')):null;
       }
-      return out;
+      const caption=norm(textOf(p.button));
+      const m=caption.match(/^一鍵販賣\s*[\(（]\s*([\d,]+)\s*件/u);
+      const buttonTotal=m?Number(m[1].replace(/,/g,'')):null;
+      const qualityTotal=Object.values(counts).every(Number.isFinite)?
+        Object.values(counts).reduce((a,b)=>a+b,0):null;
+      if(buttonTotal!==null&&qualityTotal!==null&&buttonTotal!==qualityTotal)
+        throw Error('品質數量與「一鍵販賣」總件數不同，暫停以避免誤賣：'+qualityTotal+' / '+buttonTotal);
+      const total=buttonTotal??qualityTotal;
+      if(total===null||!Number.isSafeInteger(total)||total<0)
+        throw Error('讀不到「一鍵販賣（N 件）」或品質合計，停止操作。');
+      return {counts,total,buttonTotal,qualityTotal};
     }
     async function setQuality(p){
       for(const g of GRADES){
         activeCheck();
         const cb=checkboxFor(p.root,g,true);
         if(!cb||cb.disabled)throw Error('讀不到品質勾選框：'+g);
-        if(!cb.checked){cb.click();await sleep(90);}
+        inform('正在勾選 '+g+' 品質...');
+        if(!cb.checked){cb.click();await sleep(380);}
         if(!cb.checked)throw Error('無法勾選品質：'+g);
       }
       for(const name of ['包含已插卡','包含已精煉']){
         const cb=checkboxFor(p.root,name);
         if(!cb)throw Error('找不到安全設定：'+name);
-        if(cb.checked){cb.click();await sleep(90);}
+        if(cb.checked){cb.click();await sleep(380);}
         if(cb.checked)throw Error('無法關閉安全設定：'+name);
       }
-      return countsFrom(p);
+      inform('五種品質已勾選，等待遊戲更新待售件數...');
+      await sleep(1000);
+      const latest=panel();
+      if(!latest)throw Error('品質勾選後商人介面消失，停止操作。');
+      for(const g of GRADES){if(checkboxFor(latest.root,g,true)?.checked!==true)throw Error('品質狀態未同步：'+g);}
+      return countsFrom(latest);
     }
     function allSellButtons(){
       return [...document.querySelectorAll('button')].filter(b=>
@@ -794,10 +812,9 @@
       verifyProtectionForSale();
       const p=panel();
       if(!p)throw Error('找不到商人的「販賣」頁，請先開啟。');
-      const counts=await setQuality(p);
-      const total=Object.values(counts).every(Number.isFinite)?Object.values(counts).reduce((a,b)=>a+b,0):null;
-      if(total===null)throw Error('無法驗證五種品質數量，停止販賣。');
-      if(p.button.disabled||total===0){
+      const summary=await setQuality(p);
+      const {total,counts}=summary;
+      if(total===0){
         inform('五品質已勾選，但目前沒有可販賣裝備（或按鈕不可用）；未販賣。');
         return {empty:true};
       }
@@ -811,15 +828,29 @@
       for(const name of ['包含已插卡','包含已精煉']){
         if(checkboxFor(current.root,name)?.checked!==false)throw Error('安全排除選項狀態異常：'+name);
       }
-      inform('已驗證保護與品質，準備按「一鍵販賣」...');
-      p.button.click();
+      inform('已勾選五品質｜待售 '+total+' 件。稍後按「一鍵販賣」...');
+      await sleep(1000);
+      activeCheck();
+      const ready=panel();
+      if(!ready||ready.button.disabled)throw Error('等待後「一鍵販賣」仍不可用，停止販賣。');
+      const currentCount=countsFrom(ready);
+      if(currentCount.total!==total)throw Error('等待後待售件數變動，停止販賣。');
+      for(const g of GRADES){if(checkboxFor(ready.root,g,true)?.checked!==true)throw Error('點販賣前品質未保持勾選：'+g);}
+      inform('按下「一鍵販賣」，等待確認視窗...');
+      ready.button.click();
+      await sleep(950);
       const all=await waitSellAllButton();
       if(!all)throw Error('按下一鍵販賣後，沒有找到「全部賣掉」；請人工查看，不會自動返程。');
       if(all.disabled)throw Error('「全部賣掉」目前不可用，停止。');
       activeCheck();
       // 只按唯一可見且文字完全相符的確認按鈕，不推測或代按其他選項。
-      inform('找到確認視窗，按下「全部賣掉」...');
+      inform('已找到「全部賣掉」，稍後確認出售 '+total+' 件...');
+      await sleep(1100);
+      activeCheck();
+      if(!all.isConnected||all.disabled||allSellButtons().length!==1)throw Error('販賣確認視窗狀態已變更，停止。');
+      inform('按下「全部賣掉」，等待遊戲完成...');
       all.click();
+      await sleep(900);
       // 等遊戲消除「全部賣掉」確認框；不能用固定 650ms 誤判動畫延遲。
       const confirmedBy=Date.now()+5000;
       while(allSellButtons().length && Date.now()<confirmedBy){
@@ -827,7 +858,8 @@
         await sleep(160);
       }
       if(allSellButtons().length)throw Error('按「全部賣掉」後確認視窗仍在，停止後續關閉與返程。');
-      inform('已按「全部賣掉」，正在關閉礦石商人視窗...');
+      inform('「全部賣掉」確認框已消失，稍後關閉礦石商人視窗...');
+      await sleep(1000);
       return {empty:false};
     }
     // 「關閉」在商人視窗底部，往往不在一鍵販賣設定區 p.root 的子節點內。
@@ -862,14 +894,19 @@
       if(!p)return true; // 商人已自行消失
       const btn=merchantCloseButton(p);
       if(!btn)throw Error('找不到礦石商人視窗底部的「關閉」按鈕，禁止返程。');
-      inform('正在按礦石商人視窗「關閉」...');
+      inform('稍候關閉礦石商人視窗...');
+      await sleep(850);
+      activeCheck();
+      if(!btn.isConnected||btn.disabled)throw Error('商人關閉按鈕狀態已改變，停止。');
+      inform('正在按商人視窗底部「關閉」...');
       btn.click();
       const until=Date.now()+5000;
       while(Date.now()<until){
         activeCheck();
         if(!shopOpen()){
           inform('商人視窗已關閉，準備左13下、上9下原路返回...');
-          await sleep(300);
+          await sleep(1100);
+          activeCheck();
           return true;
         }
         await sleep(140);

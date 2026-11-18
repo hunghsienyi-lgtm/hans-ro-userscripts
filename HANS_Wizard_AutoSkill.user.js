@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 二轉巫師｜五核心自動選技＋尋寶寶箱
 // @namespace    ro-local-profiles
-// @version      1.30
-// @description  v1.30：巫師尋寶率誤放逐保護版。只認真實持有正尋寶率／確認新道具入格；未確認前無論5/5都禁止放逐，滿格時不誤選新道具。
+// @version      1.31
+// @description  v1.31：巫師寶箱先選非神祇正尋寶率、沒得選先重抽再考慮尋寶神祇；持有神祇禁止替換，保留補滿5/5、放逐與其他道具排序。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        none
 // @run-at       document-idle
@@ -15,6 +15,7 @@
   if (document.getElementById('hans-mage-autoskill-v123')) return;
   const potion = [/傷害藥水|damage potion|potion of damage/i, /範圍藥水|area potion|potion of area/i];
   const label = '巫師';
+  const version = '1.31';
   const shown = el => {
     if (!el || !el.isConnected || el.disabled || !el.getClientRects().length) return false;
     for (let n=el, i=0; n && i<12; n=n.parentElement, i++) {
@@ -293,7 +294,9 @@
   // 僅有候選卡文字、選卡點擊、5/5 或上輪殘留狀態，都不算已取得！
   const treasureState={
     foundDiscovery:false,lastCount:null,banished:new Set(),pendingExile:null,
-    exileBroken:false,pendingDiscoveryProof:null,verifiedBy:''
+    exileBroken:false,pendingDiscoveryProof:null,verifiedBy:'',
+    heldDeity:false,heldDeityName:'',pendingDeityProof:null,
+    knownDeityInventory:false
   };
   function positiveDiscoveryValue(text){
     const t=String(text||'').normalize('NFKC');
@@ -323,6 +326,61 @@
       return positiveDiscoveryValue(t)!==null;
     });
   }
+  // 候選卡不可當成已持有裝備。神祇身分由本局已確認選取及持有道具欄交叉追蹤。
+  const deityNamePattern=/(?:神祇|神祗|之神|deity)/i;
+  const canonicalDeityName=s=>String(s||'').normalize('NFKC').replace(/[\s\u200b-\u200d]/g,'').toLowerCase();
+  function isDeityCard(card){
+    return deityNamePattern.test(cardName(card)+' '+read(card,'.pk-sub'));
+  }
+  function ownedDeityEvidence(panel){
+    const owned=panel.querySelector('#pk-items,#pk-item-sockets,#item-sockets,.pk-items,.pk-item-sockets');
+    if(!owned)return {deity:false,name:'',inventoryReadable:false};
+    const nodes=[owned,...owned.querySelectorAll('[title],[aria-label],[data-name],[data-item-name],[data-effect],.pk-item,.item-slot')];
+    const labels=[];
+    let itemLabels=0;
+    for(const node of nodes){
+      if(node.closest('.pk-card,.pk-slot'))continue;
+      const parts=[node.getAttribute('data-name'),node.getAttribute('data-item-name'),
+        node.getAttribute('title'),node.getAttribute('aria-label'),node.getAttribute('data-effect')];
+      if(node!==owned&&node.children.length<=2)parts.push(node.textContent);
+      if(node!==owned&&parts.some(v=>String(v||'').trim()))itemLabels++;
+      for(const value of parts)if(value&&deityNamePattern.test(String(value)))labels.push(String(value).normalize('NFKC'));
+    }
+    const names=labels.map(t=>t.split(/[\n｜|；;]/)[0].trim()).filter(Boolean);
+    return {deity:labels.length>0,name:names.find(n=>deityNamePattern.test(n))||'',
+      inventoryReadable:itemLabels>0};
+  }
+  function syncHeldDeity(panel){
+    const observed=ownedDeityEvidence(panel);
+    treasureState.knownDeityInventory=observed.inventoryReadable;
+    if(observed.deity){
+      treasureState.heldDeity=true;
+      if(!treasureState.heldDeityName&&observed.name)treasureState.heldDeityName=observed.name;
+    }
+  }
+  function sameHeldDeity(card){
+    const target=canonicalDeityName(cardName(card));
+    const owned=canonicalDeityName(treasureState.heldDeityName);
+    if(!owned||!target||target.length<3)return false;
+    return owned===target||owned.startsWith(target)||owned.includes(target+'lv');
+  }
+  function safeTreasureCard(card,items){
+    if(items?.full&&isNew(card))return false;
+    if(!isDeityCard(card))return true;
+    if(treasureState.heldDeity||treasureState.pendingDeityProof)
+      return !isNew(card)&&sameHeldDeity(card);
+    // 道具欄不完整時，無法確認先前沒拿過神祇：禁止冒險開另一位神祇。
+    if(items?.known&&items.count>0&&!treasureState.knownDeityInventory)return false;
+    return true;
+  }
+  function orderedSafeTreasure(cards,items){
+    return cards.filter(card=>safeTreasureCard(card,items));
+  }
+  function orderedDiscovery(cards){
+    return cards.filter(isDiscoveryTreasure).sort((a,b)=>
+      Number(isDeityCard(a))-Number(isDeityCard(b))||
+      chestRank(b)-chestRank(a)||discoveryTieRank(b)-discoveryTieRank(a));
+  }
   function treasureItemsInfo(panel){
     const sources=[
       panel.querySelector('#pk-items,#pk-item-sockets,#item-sockets,.pk-items,.pk-item-sockets'),
@@ -343,9 +401,25 @@
       treasureState.foundDiscovery=false;treasureState.banished.clear();
       treasureState.pendingExile=null;treasureState.exileBroken=false;
       treasureState.pendingDiscoveryProof=null;treasureState.verifiedBy='';
-      diagnostic('新場次／道具格數重置｜重新確認尋寶率，禁止沿用上一局');
+      treasureState.heldDeity=false;treasureState.heldDeityName='';
+      treasureState.pendingDeityProof=null;treasureState.knownDeityInventory=false;
+      diagnostic('新場次／道具格數重置｜重新確認尋寶率及已持有神祇');
     }
     treasureState.lastCount=count;
+    syncHeldDeity(panel);
+    if(treasureState.pendingDeityProof){
+      const proof=treasureState.pendingDeityProof;
+      if(count===proof.beforeCount+1&&performance.now()-proof.at<12000){
+        treasureState.heldDeity=true;treasureState.heldDeityName=proof.name;
+        treasureState.pendingDeityProof=null;
+        diagnostic('已確認神祇入格：'+proof.name+'｜鎖定不替換');
+      }else if(performance.now()-proof.at>=12000){
+        // 未確認成功也保留本局神祇鎖，以防誤覆蓋。
+        treasureState.heldDeity=true;treasureState.heldDeityName=proof.name;
+        treasureState.pendingDeityProof=null;
+        diagnostic('神祇入格未確認：為避免覆蓋仍鎖定 '+proof.name);
+      }
+    }
     if(ownedDiscoveryConfirmed(panel)){
       treasureState.foundDiscovery=true;treasureState.verifiedBy='owned-item-positive-stat';
       treasureState.pendingDiscoveryProof=null;
@@ -369,6 +443,14 @@
     return discoveryGain(card)!==null&&discoveryGain(card)>0;
   }
   function recordTreasureChoice(selection){
+    if(selection?.chestNewDeity===true&&Number.isFinite(selection?.chestBeforeCount)){
+      treasureState.pendingDeityProof={
+        name:selection.name,beforeCount:selection.chestBeforeCount,at:performance.now()
+      };
+      treasureState.heldDeity=true;
+      treasureState.heldDeityName=selection.name;
+      diagnostic('已按新神祇：'+selection.name+'｜暫時鎖定，等待入格確認');
+    }
     // 選卡確認/換手/關閉視窗並非「取得道具」的單獨證據。
     // 等下一次道具格數確實+1才准將 foundDiscovery 改為 true。
     if(selection?.chestNewDiscovery===true&&
@@ -448,6 +530,7 @@
     }
     // 僅放逐當前五格中已持有的非尋寶率道具強化；不放逐新道具，也不碰尋寶率。
     const targets=cards.filter(card=>!isNew(card)&&!isDiscoveryTreasure(card)&&
+      !(isDeityCard(card)&&sameHeldDeity(card))&&
       !treasureState.banished.has(cardName(card))).map(card=>({card,btn:treasureBanishButton(card)}))
       .filter(x=>x.btn);
     if(!targets.length)return false;
@@ -477,7 +560,7 @@
     if (message===lastDiagnostic) return;
     lastDiagnostic=message;
     if (button) button.title='Shift+1 切換；目前：'+message;
-    console.info('[HANS 巫師 v1.30]',message);
+    console.info('[HANS 巫師 v1.31]',message);
   }
   let nextRerollAt=0, pending=null, lastChoiceAt=0, lastChoiceKey='',choiceTries=0;
   const attempts=new WeakMap();
@@ -495,6 +578,9 @@
     return String(raw||'').normalize('NFKC').replace(/\s+/g,' ').trim();
   }
   function chooseCard(card,why) {
+    if(tick.inTreasure===true && !safeTreasureCard(card,treasureItemsInfo(document.querySelector('#picker')||document))){
+      diagnostic('拒絕不安全的寶箱卡：'+cardName(card)+'｜禁止神祇替換或滿格加新道具');return;
+    }
     const id=[cardName(card),read(card,'.pk-lines'),isNew(card)].join('|');
     if(id===lastChoiceKey && performance.now()-lastChoiceAt<600) return;
     if(id===lastChoiceKey) choiceTries++;
@@ -503,6 +589,7 @@
     pending={card,name:cardName(card),reason:why,at:performance.now(),
       // 只有正數尋寶率的「新道具」，且選擇後格數增加才能算入帳。
       chestNewDiscovery:tick.inTreasure===true&&isNew(card)&&isDiscoveryTreasure(card),
+      chestNewDeity:tick.inTreasure===true&&isNew(card)&&isDeityCard(card),
       chestBeforeCount:tick.inTreasure===true?treasureState.lastCount:null};
     lastChoiceAt=performance.now();
     diagnostic('選擇：'+cardName(card)+'｜'+why);
@@ -587,6 +674,10 @@
       const isOurs=!!pending && !!card &&
         (pending.card===card || (cardName(card)===pending.name && performance.now()-pending.at<4500));
       if(isOurs){
+        if(chest && !safeTreasureCard(card,treasureItemsInfo(panel))){
+          diagnostic('拒絕確認：可能觸發神祇替換 '+cardName(card));
+          pending=null;return;
+        }
         const yes=asking.querySelector('[data-yes]');
         if(shown(yes)){diagnostic('確認選卡：'+pending.name);yes.click();recordTreasureChoice(pending);pending=null;
           lastChoiceKey='';choiceTries=0;}
@@ -603,53 +694,60 @@
     }
     if(chest){
       const items=treasureItemsInfo(panel);
-      // 只以「道具 0/5～5/5」而不是人物等級或技能 5/5 判斷寶箱階段。
-      // 若新遊戲介面無法辨識道具數量，保守保留既有尋寶率排序，不提前放逐。
+      // 所有分支先做安全過濾，避免五格補滿與保底路徑繞過神祇鎖定。
+      const safe=orderedSafeTreasure(cards,items);
+      const ordered=[...safe];if(ordered.length>1)[ordered[0],ordered[1]]=[ordered[1],ordered[0]];
+      const discovery=orderedDiscovery(ordered);
+      const nonDeityDiscovery=discovery.filter(c=>!isDeityCard(c));
+      const deityDiscovery=discovery.filter(isDeityCard);
       if(items.known){
-        const ordered=[...cards];if(ordered.length>1)[ordered[0],ordered[1]]=[ordered[1],ordered[0]];
-        const treasureCandidates=ordered.filter(isDiscoveryTreasure).sort((a,b)=>
-          chestRank(b)-chestRank(a)||discoveryTieRank(b)-discoveryTieRank(a));
         if(!treasureState.foundDiscovery){
-          // 沒有「已持有正數尋寶率」的證據就維持尋寶率優先，不進補5/5／放逐。
-          // 若5/5已滿，不能試圖再裝一個新的尋寶道具（遊戲通常無空格）。
-          const candidates=treasureCandidates.filter(c=>!items.full||!isNew(c));
-          if(candidates.length){
-            chooseCard(candidates[0],'寶箱第1階段：尋寶率尚未核實，先取得正加成');return;
+          if(nonDeityDiscovery.length){
+            chooseCard(nonDeityDiscovery[0],'寶箱第1階段：優先非神祇尋寶率');return;
           }
-          if(rerollTreasureForDiscovery(panel,'尚未確認持有正尋寶率，優先尋找'))return;
+          if(rerollTreasureForDiscovery(panel,'尚無非神祇尋寶率，先重抽再考慮尋寶神祇'))return;
+          if(deityDiscovery.length){
+            chooseCard(deityDiscovery[0],'寶箱第1階段：重抽耗盡，尋寶神祇最後保底');return;
+          }
           const backup=ordered.filter(c=>!isNew(c)||(!items.full&&items.count<4))
             .sort((a,b)=>chestRank(b)-chestRank(a))[0];
           if(backup){chooseCard(backup,'尋寶率尚未取得｜不放逐、不提前占滿最後一格');return;}
           diagnostic(items.full?
-            '道具5/5卻沒有確認持有尋寶率｜禁止放逐及新增道具，需手動確認':
-            '道具4/5尚未取得尋寶率｜禁止放逐，保留最後一格等待尋寶率');
-          return;
+            '道具5/5但未確認尋寶率｜禁止放逐及取代神祇，需手動確認':
+            '沒有安全尋寶率或重抽｜保留空格，等待手動處理');return;
         }
         if(!items.full){
-          // 階段二：已拿到尋寶率後，速度優先；新道具先拿，盡快達5/5。
+          // 原 A 方案不變：確認尋寶率後，先填滿 5/5，再放逐。
           const fresh=ordered.filter(isNew).sort((a,b)=>chestRank(b)-chestRank(a))[0];
           if(fresh){chooseCard(fresh,'寶箱第2階段：補滿道具 '+items.count+'/5');return;}
-          if(rerollTreasureForDiscovery(panel,'補滿道具5/5，尋找新道具'))return;
+          if(rerollTreasureForDiscovery(panel,'補滿道具5/5，尋找安全新道具'))return;
           const fallback=ordered.sort((a,b)=>chestRank(b)-chestRank(a))[0];
           if(fallback){chooseCard(fallback,'道具未滿，無重抽：先完成本箱選卡');return;}
-        }else{
-          // 階段三必須先通過上方「尋寶率已確認」門檻，放逐函式還有第二道硬保護。
-          if(treasureState.banished.size<2&&tryTreasureBanish(cards))return;
-          const bestDiscovery=treasureCandidates[0];
-          if(bestDiscovery){chooseCard(bestDiscovery,
-            '寶箱第3階段：放逐 '+treasureState.banished.size+'/2，專攻尋寶率');return;}
-          if(rerollTreasureForDiscovery(panel,'道具5/5，尋找尋寶率強化'))return;
-          const fallback=ordered.sort((a,b)=>chestRank(b)-chestRank(a))[0];
-          if(fallback){chooseCard(fallback,'尋寶率未出現且無重抽：本箱保底');return;}
+          diagnostic('沒有可安全選取的寶箱卡｜停止而不是覆蓋神祇');return;
         }
+        if(treasureState.banished.size<2&&tryTreasureBanish(cards))return;
+        if(discovery.length){
+          chooseCard(discovery[0],'寶箱第3階段：放逐 '+treasureState.banished.size+'/2，專攻尋寶率');return;
+        }
+        if(rerollTreasureForDiscovery(panel,'道具5/5，尋找尋寶率強化'))return;
+        const fallback=ordered.sort((a,b)=>chestRank(b)-chestRank(a))[0];
+        if(fallback){chooseCard(fallback,'尋寶率未出現且無重抽：本箱保底');return;}
+        diagnostic('滿格且無安全卡片｜不選新道具、不取代神祇');return;
       }
-      // 舊版或未能讀到道具欄時，保留尋寶加成優先與既有寶箱重抽/保底路徑。
-      const ordered=[...cards];if(ordered.length>1)[ordered[0],ordered[1]]=[ordered[1],ordered[0]];
+      if(nonDeityDiscovery.length){chooseCard(nonDeityDiscovery[0],'寶箱未讀到道具格：非神祇尋寶率優先');return;}
+      if(rerollTreasureForDiscovery(panel,'道具格未知，先找非神祇尋寶率'))return;
+      if(deityDiscovery.length && !treasureState.heldDeity && !treasureState.pendingDeityProof &&
+         treasureState.lastCount===0){
+        chooseCard(deityDiscovery[0],'寶箱無法讀格，已確認0/5才允許尋寶神祇');return;
+      }
       const best=ordered.reduce((a,b)=>!a||betterChestCard(b,a)?b:a,null);
-      if(best&&Number.isFinite(chestRank(best))){chooseCard(best,'寶箱：尋寶率／增益排序');return;}
-      if(rerollTreasureForDiscovery(panel,'寶箱沒有合格候選'))return;
-      const backup=cards.reduce((a,b)=>!a||fallbackChestRank(b)>fallbackChestRank(a)?b:a,null);
-      if(backup)chooseCard(backup,'寶箱無可用重抽：保底');
+      if(best&&(!isDeityCard(best)||treasureState.heldDeity&&sameHeldDeity(best))){
+        chooseCard(best,'寶箱：尋寶率／增益排序');return;
+      }
+      const backup=ordered.filter(c=>!isDeityCard(c)).reduce(
+        (a,b)=>!a||fallbackChestRank(b)>fallbackChestRank(a)?b:a,null);
+      if(backup)chooseCard(backup,'寶箱無可用重抽：安全保底');
+      else diagnostic('無法確認既有神祇，停止自動選卡避免覆蓋');
       return;
     }
     const info=slotInfo(panel);
@@ -680,12 +778,12 @@
   }
   const safeTick=()=>{try{tick();}catch(error){
     diagnostic('腳本錯誤：'+String(error?.message||error));
-    console.error('[HANS 巫師 v1.30]',error);
+    console.error('[HANS 巫師 v1.31]',error);
   }};
   function enable(on){
     clearInterval(timer);
     timer=on?setInterval(safeTick,200):null;
-    button.textContent=label+'選技：'+(on?'開':'關')+' v1.30';
+    button.textContent=label+'選技：'+(on?'開':'關')+' v1.31';
     button.style.background=on?'#186442':'#384455';
     diagnostic(on?'已開啟，等待選卡畫面':'已關閉；按鈕或 Shift+1 開啟');
   }
@@ -694,7 +792,7 @@
     if(document.getElementById('hans-mage-autoskill-v123'))return;
     button=document.createElement('button');button.type='button';
     button.id='hans-mage-autoskill-v123';
-    button.dataset.hansScriptVersion='1.30';
+    button.dataset.hansScriptVersion='1.31';
     button.style.cssText='position:fixed;left:8px;bottom:84px;z-index:2147483647;color:white;border:1px solid white;border-radius:5px;padding:5px 8px;cursor:pointer';
     button.onclick=()=>{
       const on=timer===null;

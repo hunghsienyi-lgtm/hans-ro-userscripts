@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO｜逐件裝備巡檢＋GS前十保護＋Discord完整紀錄
 // @namespace    https://ro.hans-webgametw.com/
-// @version      2.5.3
-// @description  V2.5.3：加入一鍵掃描、保護、驗證、商人售出、返程的完整流程核心；無確認彈窗。
+// @version      2.6.0
+// @description  V2.6.0：一鍵全流程：開背包掃描→傳說前十自動保護→二次掃描驗證→商人自動販賣五品質→返程及DC簡報；免確認。
 // @match        https://ro.hans-webgametw.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -69,14 +69,16 @@
   const pane = document.createElement('section');
   pane.id = ID;
   pane.innerHTML = `
-    <div class="hp-title"><strong title="按住這個藍色標題列就能拖曳">HANS｜傳說裝備前10 V2.5.2</strong><button id="hp-toggle" title="縮小／展開">−</button></div>
+    <div class="hp-title"><strong title="按住這個藍色標題列就能拖曳">HANS｜一鍵清背包 V2.6.0</strong><button id="hp-toggle" title="縮小／展開">−</button></div>
     <div id="hp-body">
       <div class="hp-sub">主城按 C → 背包 → 全部；E 穿戴完全跳過。只保留傳說品質：法杖、頭上中下、披肩、飾品、鞋子、盾牌、衣服（鎧甲）。</div>
-      <div class="hp-sub">逐件掃描非 E：只對傳說法杖及其餘指定部位傳說裝備排 GS 前10。其他品質與非杖武器不保留；先預覽再手動確認。Discord只傳摘要。</div>
-      <div class="hp-bar"><button id="hp-scan">① 掃描非 E 裝備</button><button id="hp-scan-dc">① 掃描非 E＋傳 DC</button></div>
-      <div class="hp-bar"><button id="hp-apply" disabled>② 確認前10保護</button><button id="hp-stop" disabled>停止</button></div>
+      <div class="hp-sub">一鍵流程：非 E 掃描→自動保護傳說前十→複掃驗證→商人五品質自動販賣→返程與DC摘要；不再跳確認，異常即停。</div>
+      <div class="hp-bar"><button id="hp-full-cycle" style="background:#1b775a;color:white;font-weight:700;font-size:13px">▶ 一鍵全部｜掃描・保護・販賣・返程</button></div>
+      <div class="hp-sub">從主城固定原點啟動；不詢問保護／販賣同意。出現異常會停止後續操作。</div>
+      <div class="hp-bar"><button id="hp-scan">單獨掃描非 E</button><button id="hp-scan-dc">掃描＋傳 DC</button></div>
+      <div class="hp-bar"><button id="hp-apply" disabled>單獨執行保護</button><button id="hp-stop" disabled>停止</button></div>
       <div class="hp-sub" style="margin-top:9px;border-top:1px solid #cbd5e1;padding-top:7px"><b>商人路線＋一鍵販賣（可獨立執行）</b></div>
-      <div class="hp-sub">固定路線 ↓9 →13／返回 ←13 ↑9，單次按鍵固定 200ms。抵達礦石商人先送空白鍵互動，再開「販賣」。出售前仍需確認。</div>
+      <div class="hp-sub">固定路線 ↓9 →13／返回 ←13 ↑9，單次固定200ms；商人販賣與保護已免確認，但需先完成掃描、保護驗證。</div>
       <div class="hp-bar"><button id="hp-route-go">↓9 →13｜去商人</button><button id="hp-route-talk">💬 只開商人對話</button></div>
       <div class="hp-bar"><button id="hp-route-return">←13 ↑9｜返回原點</button><button id="hp-route-stop">停止</button></div>
       <div class="hp-bar"><button id="hp-route-run">▶ 去商人＋賣光＋返程</button><button id="hp-route-sell">商人已開：販賣</button></div>
@@ -104,6 +106,7 @@
   const $ = id => pane.querySelector('#' + id);
   const status = message => { $('hp-status').textContent = message; };
   const controls = () => {
+    $('hp-full-cycle').disabled = running||autoRunning;
     $('hp-scan').disabled = running||autoRunning;
     $('hp-scan-dc').disabled = running||autoRunning;
     $('hp-send').disabled = running || !scanSnapshot?.complete;
@@ -437,7 +440,7 @@
       '披肩 '+countSlot('披肩')+'｜飾品 '+countSlot('飾品')+'｜鞋子 '+countSlot('鞋子'),
       '盾牌 '+countSlot('盾牌')+'｜衣服 '+countSlot('鎧甲'),
       '傳說指定部位 GS 各前10｜預計保護 '+actions.protect+'｜取消保護 '+actions.unprotect+'｜保持 '+actions.unchanged,
-      '⚠️ 以上僅為預覽，尚未執行保護調整。'
+      snapshot.cycleResult ? ('✅ 一鍵流程：'+(snapshot.cycleResult.sale?.empty?'沒有可賣裝備':'已按全部賣掉')+'；已送出返回原點的22下按鍵') : '掃描與保護狀態摘要。'
     ];
     const summary=lines.join('\n');
     if(summary.length>1900)throw Error('摘要長度異常，為避免過長已停止傳送。');
@@ -947,6 +950,7 @@
       console.warn('[HANS 一鍵流程]',e);
     }finally{autoRunning=false;controls();}
   }
+  $('hp-full-cycle').onclick=runOneTouch;
   initMerchantRoute();
   controls();
 })();

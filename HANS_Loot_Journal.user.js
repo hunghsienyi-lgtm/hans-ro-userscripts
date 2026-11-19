@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.9.25
-// @description  v0.9.25：新增第一章／第二章選關、獨立設定；防止章節切換未完成或右側預覽無法確認時誤按出發，只有目標與預覽一致才出征。
+// @version      0.9.26
+// @description  v0.9.26：遠征第一章／第二章可分別選關、獨立記憶；修正新章節操作流程，出發前強制比對右側關卡名稱，避免錯關。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -28,7 +28,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5000, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.9.25';
+  const VERSION = '0.9.26';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -2351,11 +2351,7 @@
     }
     if(confirmed&&!depart){tell(`已選${stage.name}，等待「出發」按鈕`);return;}
     if(stageClickedAt && Date.now()-stageClickedAt<1700){tell(`已按${stage.name}，等待右側切換`);return;}
-    // 只有看不到任何其他目標副本的預覽時，才容許「劇情」變成「出發」當作輔助確認。
-    if(stageClickedAt && beforeStageWasStory && depart && !otherPreview){
-      if(action('depart',depart,'出發（劇情已變更）',1,1100))departAt=Date.now();
-      return;
-    }
+    // 「劇情」切換為「出發」不再是充分證據；必須先讀到右側正確關卡標題。
     if((attempts.stage||0)>=3){tell(`選了${stage.name}仍無法確認切換；停止重試，避免按錯副本`);return;}
     beforeStageWasStory=beforeStageWasStory||storyTextIsVisible();
     // 左邊清單若尚未捲到洞穴，先讓項目進入可視範圍。

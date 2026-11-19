@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.9.23
-// @description  v0.9.23：支援新版遠征第一章／第二章切換，第一章保留六周目；第二章獨立關卡清單與選關記憶，驗證章節、周目及右側預覽後出發。
+// @version      0.9.24
+// @description  v0.9.24：遠征第一章／第二章切換支援，加入章節選擇器、獨立關卡清單；需確認舊周目列已切離，防止章節動畫尚未完成時誤按出發。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -28,7 +28,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5000, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.9.23';
+  const VERSION = '0.9.24';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -2169,9 +2169,20 @@
     const tabs=chapterTabs();
     if(!tabs)return {tabs:null,chapter:1,source:'legacy-one-chapter'};
     const selected=selectedWorldFromTabs(tabs);
-    if(selected===1||selected===2)return {tabs,chapter:selected,source:'chapter-selected-tab'};
+    const legacyWorldTabs=worldTabs();
+    // 畫面切到第二章時第一章的周目按鈕應消失。若仍看得到代表切換尚未完成。
+    if(selected===2){
+      if(legacyWorldTabs)return {tabs,chapter:null,source:'chapter-transition'};
+      const rows=stageRows();
+      if(rows.length<2)return {tabs,chapter:null,source:'chapter-waiting-rows'};
+      return {tabs,chapter:2,source:'chapter-selected-tab'};
+    }
+    if(selected===1){
+      if(!legacyWorldTabs)return {tabs,chapter:null,source:'chapter-transition'};
+      return {tabs,chapter:1,source:'chapter-selected-tab'};
+    }
     // 若樣式不提供選取資訊，只從確切存在的周目列或第二章關卡標題核實。
-    if(worldTabs())return {tabs,chapter:1,source:'first-chapter-world-tabs'};
+    if(legacyWorldTabs)return {tabs,chapter:1,source:'first-chapter-world-tabs'};
     const rows=stageRows();
     const known=new Set(SECOND_CHAPTER_SEEDS.map(([name])=>norm(name)));
     if(rows.filter(row=>known.has(norm(row.name))).length>=2)

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.9.24
-// @description  v0.9.24：遠征第一章／第二章切換支援，加入章節選擇器、獨立關卡清單；需確認舊周目列已切離，防止章節動畫尚未完成時誤按出發。
+// @version      0.9.25
+// @description  v0.9.25：新增第一章／第二章選關、獨立設定；防止章節切換未完成或右側預覽無法確認時誤按出發，只有目標與預覽一致才出征。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -28,7 +28,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5000, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.9.24';
+  const VERSION = '0.9.25';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -2339,10 +2339,9 @@
     const previewHits=hits(anyStageRe).filter(rightPreview);
     const previewMatch=previewHits.some(h=>stage.re.test(h.t)&&stageFitsWorld(h.t,chosenWorld()));
     const otherPreview=previewHits.some(h=>!stage.re.test(h.t)||!stageFitsWorld(h.t,chosenWorld()));
-    // 如果右邊明顯顯示另一個副本，即使左邊的卡片有「已選」樣式也不信任。
-    // 新版藍框選中不一定提供 selected/active class；右側精確預覽可作獨立證據。
-    const confirmed=!otherPreview&&(
-      previewMatch||(previewHits.length===0&&selectedStage(row.el)));
+    // 章節和周目可能共用左側藍框，不能以已選中 class 代替右側預覽。
+    // 必須確實讀到目標副本的右側標題，才准按出發；未讀到寧可重新選關。
+    const confirmed=previewMatch&&!otherPreview;
     const depart=findControl(W.depart);
     if(stageClickedAt&&Date.now()-stageClickedAt<1500){tell('已按關卡，等待右側預覽更新');return;}
     if(confirmed && depart){

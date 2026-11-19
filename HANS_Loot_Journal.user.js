@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HANS RO 選關＋戰利品｜每場結束統一匯報
 // @namespace    ro-local-loot-journal
-// @version      0.9.22
-// @description  v0.9.22：返回角色最短5秒、保留1.8秒穩定性確認；取消每場戰利品總表及待送通知，只傳每場裝備掃描摘要，保留本機戰利品紀錄。
+// @version      0.9.23
+// @description  v0.9.23：支援新版遠征第一章／第二章切換，第一章保留六周目；第二章獨立關卡清單與選關記憶，驗證章節、周目及右側預覽後出發。
 // @match        *://ro.hans-webgametw.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -28,7 +28,7 @@
   const DIFFICULTY_KEY = 'hans-stage-loot-pending-difficulty-v06';
   const RESULT_MIN_MS = 5000, RESULT_STABLE_MS = 1800, RESULT_MAX_MS = 15500;
   const UI_ID = 'ro-loot-journal-v05-ui';
-  const VERSION = '0.9.22';
+  const VERSION = '0.9.23';
   const norm = x => String(x ?? '').normalize('NFKC').replace(/[\u200b-\u200f\ufeff]/g,'').replace(/\u00a0/g,' ').replace(/[\t ]+/g,' ').trim();
   const label = el => norm(el?.innerText || el?.textContent || '');
   const jsonRead = (key, def) => { try { return JSON.parse(localStorage.getItem(key) || 'null') ?? def; } catch { return def; } };
@@ -731,10 +731,23 @@
   };
   const CATALOG_KEY='hh-ro-stage-catalog-v062', SELECT_KEY='hh-ro-dungeon-v16';
   const WORLD_KEY='hh-ro-expedition-world-v080', WORLD_TARGETS_KEY='hh-ro-world-targets-v080';
-  const WORLD_NAMES={1:'一周目',2:'二周目',3:'三周目',4:'四周目',5:'五周目',6:'六周目'};
+  const CHAPTER_KEY='hh-ro-expedition-chapter-v1';
+  const CHAPTER_NAMES={1:'第一章',2:'第二章'};
+  // 第二章不顯示周目按鈕；內部用 7 表示「第二章關卡集合」，
+  // 與第一章一周目的無後綴名稱分開儲存，不能混淆。
+  const SECOND_CHAPTER_WORLD=7;
+  const SECOND_CHAPTER_SEEDS=[
+    ['吉芬地下迷宮','71-76'],
+    ['時計塔地下','77-82'],
+    ['深淵之湖','83-88'],
+    ['克雷斯特漢姆修道院','89-94'],
+    ['尼芙菲姆原野','95-99']
+  ];
+  const WORLD_NAMES={1:'一周目',2:'二周目',3:'三周目',4:'四周目',5:'五周目',6:'六周目',7:'第二章'};
   const worldSelections=(()=>{try{const v=JSON.parse(localStorage.getItem(WORLD_TARGETS_KEY)||'{}');return v&&typeof v==='object'?v:{}}catch{return {}}})();
   if(!worldSelections['1'])try{worldSelections['1']=localStorage.getItem(SELECT_KEY)||'cave'}catch{worldSelections['1']='cave'}
-  let initialWorld=1;try{const w=Number(localStorage.getItem(WORLD_KEY));if(WORLD_NAMES[w])initialWorld=w}catch{}
+  let initialWorld=1;try{const w=Number(localStorage.getItem(WORLD_KEY));if(w>=1&&w<=6)initialWorld=w}catch{}
+  let initialChapter=1;try{if(localStorage.getItem(CHAPTER_KEY)==='2')initialChapter=2}catch{}
 
   const savedCatalog=(()=>{
     try{const v=JSON.parse(localStorage.getItem(CATALOG_KEY)||'[]');return Array.isArray(v)?v:[]}
@@ -761,7 +774,10 @@
     return 1;
   }
   function baseStageName(name){return norm(name).replace(REFORM_MARK,'');}
-  function stageFitsWorld(name,world){return stageNameWorld(name)===Number(world);}
+  function stageFitsWorld(name,world){
+    return Number(world)===SECOND_CHAPTER_WORLD?
+      stageNameWorld(name)===1:stageNameWorld(name)===Number(world);
+  }
   function stageLabelForWorld(base,world){
     const clean=baseStageName(base);
     return clean+(world===2?'・改':world===3?'・改²':world===4?'・改³':world===5?'・改⁴':world===6?'・改⁵':'');
@@ -771,7 +787,8 @@
     return stageLabelForWorld(baseStageName(name),Number(world));
   }
 
-  const chosenWorld=()=>Number(worldPicker.value)||1;
+  const chosenChapter=()=>Number(chapterPicker.value)===2?2:1;
+  const chosenWorld=()=>chosenChapter()===2?SECOND_CHAPTER_WORLD:(Number(worldPicker.value)||1);
   function redrawStageChoices(){
     const world=chosenWorld(),before=picker.value;
     const entries=Object.entries(STAGES).filter(([,v])=>v.world===world);
@@ -816,7 +833,7 @@
   // 用已知地圖的原名推導一至五周目選關候選，無須先人工捲完清單。
   // 候選本身不代表已解鎖；真正出征前仍須在該周目看到相同名稱、Lv 與可挑戰。
   function seedKnownStageCandidates(){
-    const bases=new Set(Object.values(STAGES).map(x=>baseStageName(x.name)));
+    const bases=new Set(Object.values(STAGES).filter(x=>x.world!==SECOND_CHAPTER_WORLD).map(x=>baseStageName(x.name)));
     for(const base of bases){
       if(!base||base.length<2||base.length>40)continue;
       for(const world of [1,2,3,4,5,6]){
@@ -939,7 +956,8 @@
   }
   function stageExplorerTick(){
     if(!expeditionOpen()){resetCatalog();catalog.world=null;return;}
-    if(worldClickAt&&Date.now()-worldClickAt<700)return; // 等周目切換動畫與列表更新
+    if((worldClickAt&&Date.now()-worldClickAt<700)||
+       (chapterClickAt&&Date.now()-chapterClickAt<750))return; // 等章節／周目切換
     const tab=currentWorldState();
     if(tab.world===null){
       tell('關卡周目尚未辨識，等待畫面載入');return;
@@ -955,7 +973,7 @@
         catalog.running=false;readStageCatalog(tab.world);return;
       }
     }
-    if([4,5,6].includes(tab.world) && !completedWorldScans.has(tab.world)){
+    if([4,5,6,7].includes(tab.world) && !completedWorldScans.has(tab.world)){
       scanAllStages(tab.world);
       return;
     }
@@ -985,13 +1003,26 @@
   btn.style.cssText = 'font:bold 12px sans-serif;padding:4px 8px;color:#fff;background:#5c6b82;border:1px solid #c9dbed;border-radius:5px;cursor:pointer';
   const msg = document.createElement('div');
   msg.style.cssText='margin-top:4px;max-width:270px;overflow-wrap:anywhere';
+  const chapterPicker=document.createElement('select');
+  chapterPicker.id='hans-auto-chapter-picker';
+  chapterPicker.title='選擇自動重進章節';chapterPicker.setAttribute('aria-label','遠征章節');
+  chapterPicker.style.cssText='margin-left:5px;color:#18283b;background:white;border-radius:4px;padding:4px;font:12px sans-serif;max-width:86px';
+  for(const [key,label] of Object.entries(CHAPTER_NAMES)){
+    const op=document.createElement('option');op.value=key;op.textContent=label;chapterPicker.append(op);
+  }
+  chapterPicker.value=String(initialChapter);
   const worldPicker=document.createElement('select');
   worldPicker.title='選擇自動重進的周目';worldPicker.setAttribute('aria-label','遠征周目');
   worldPicker.style.cssText='margin-left:5px;color:#18283b;background:white;border-radius:4px;padding:4px;font:12px sans-serif;max-width:86px';
-  for(const [key,label] of Object.entries(WORLD_NAMES)){
-    const op=document.createElement('option');op.value=key;op.textContent=label;worldPicker.append(op);
+  for(const world of [1,2,3,4,5,6]){
+    const op=document.createElement('option');op.value=String(world);
+    op.textContent=WORLD_NAMES[world];worldPicker.append(op);
   }
   worldPicker.value=String(initialWorld);
+  function updateChapterControls(){
+    worldPicker.style.display=chosenChapter()===2?'none':'';
+  }
+  updateChapterControls();
   const picker=document.createElement('select');
   picker.title='選擇此周目關卡';picker.setAttribute('aria-label','自動進入的副本');
   picker.style.cssText='margin-left:5px;color:#18283b;background:white;border-radius:4px;padding:4px;font:12px sans-serif;max-width:150px';
@@ -1052,6 +1083,13 @@
     }
   }
   seedKnownStageCandidates();
+  // 第二章與第一章一周目同為無後綴名稱，仍以獨立 7 號集合管理；
+  // 以下只是截圖已知的關卡候選，是否可出發必須由當場解鎖狀態驗證。
+  for(const [name,level] of SECOND_CHAPTER_SEEDS){
+    if(Object.values(STAGES).some(x=>x.world===SECOND_CHAPTER_WORLD&&norm(x.name)===norm(name)))continue;
+    const key='hans:w7:'+norm(name);
+    STAGES[key]={name,re:namePattern(name),unlocked:null,level,world:SECOND_CHAPTER_WORLD,verified:false};
+  }
   // 自動轉換 0.9.14–16 的舊周目目標鍵，不需使用者重新選關。
   for(const [wKey,oldKey] of Object.entries(worldSelections)){
     const world=Number(wKey),m=String(oldKey||'').match(/^hans:w\d+:(.+)$/u);
@@ -1584,9 +1622,9 @@
       if(mapReadyForZoom())queueZoom();
     }
   });
-  hud.append(btn,worldPicker,picker,shortGroup,shortHelp,invToggle,returnAdjust,sellPanel,msg);
+  hud.append(btn,chapterPicker,worldPicker,picker,shortGroup,shortHelp,invToggle,returnAdjust,sellPanel,msg);
   mountStageIntoLootPanel();
-  const uiElements=[btn,worldPicker,picker,shortToggle,shortGrace,sellToggle,sellPreviewButton];
+  const uiElements=[btn,chapterPicker,worldPicker,picker,shortToggle,shortGrace,sellToggle,sellPreviewButton];
   if(uiElements.some(el=>!hud.contains(el)) || hud.parentElement?.id!=='roj4-menu'){
     throw new Error('右下角選關／3分鐘刷卡元件未能正常掛載');
   }
@@ -1980,6 +2018,12 @@
     if(active){timer=setInterval(tick,450);tick();}
   }
   btn.addEventListener('click',()=>enable(!active));
+  chapterPicker.addEventListener('change',()=>{
+    try{localStorage.setItem(CHAPTER_KEY,chapterPicker.value)}catch{}
+    updateChapterControls();redrawStageChoices();
+    resetCatalog();catalog.world=null;phase('');
+    tell('已選擇'+CHAPTER_NAMES[chosenChapter()]+'，等待遊戲章節切換與關卡確認');
+  });
   worldPicker.addEventListener('change',()=>{
     try{localStorage.setItem(WORLD_KEY,worldPicker.value)}catch{}
     redrawStageChoices();resetCatalog();catalog.world=null;phase('');
@@ -2111,7 +2155,56 @@
     const values=[...distinct.values()];
     return values.every(x=>x===values[0])?values[0]:null;
   }
+  function chapterTabs(){
+    const tabs={};
+    for(const el of document.querySelectorAll('button,[role="button"]')){
+      if(hud.contains(el)||!shown(el))continue;
+      const label=norm(el.textContent||'');
+      if(label==='第一章')tabs[1]=el;
+      if(label==='第二章')tabs[2]=el;
+    }
+    return tabs[1]&&tabs[2]?tabs:null;
+  }
+  function currentChapterState(){
+    const tabs=chapterTabs();
+    if(!tabs)return {tabs:null,chapter:1,source:'legacy-one-chapter'};
+    const selected=selectedWorldFromTabs(tabs);
+    if(selected===1||selected===2)return {tabs,chapter:selected,source:'chapter-selected-tab'};
+    // 若樣式不提供選取資訊，只從確切存在的周目列或第二章關卡標題核實。
+    if(worldTabs())return {tabs,chapter:1,source:'first-chapter-world-tabs'};
+    const rows=stageRows();
+    const known=new Set(SECOND_CHAPTER_SEEDS.map(([name])=>norm(name)));
+    if(rows.filter(row=>known.has(norm(row.name))).length>=2)
+      return {tabs,chapter:2,source:'second-chapter-stage-list'};
+    return {tabs,chapter:null,source:'chapter-unconfirmed'};
+  }
+  let chapterClickAt=0;
+  function ensureChapterTab(){
+    const state=currentChapterState(),wanted=chosenChapter();
+    if(!state.tabs)return wanted===1; // 舊版沒有章節選單，只有第一章可沿用。
+    if(state.chapter===wanted){
+      if(chapterClickAt&&Date.now()-chapterClickAt<750){
+        tell('等待'+CHAPTER_NAMES[wanted]+'切換完成');return false;
+      }
+      attempts.chapter=0;return true;
+    }
+    if(state.chapter===null){
+      tell('正在確認第一章／第二章的選取狀態，不亂點出發');return false;
+    }
+    if(Date.now()-chapterClickAt<1300)return false;
+    if(action('chapter',state.tabs[wanted],CHAPTER_NAMES[wanted],2,1200)){
+      chapterClickAt=Date.now();worldClickAt=0;
+      resetCatalog();catalog.world=null;stageClickedAt=0;departAt=0;
+      tell('已點'+CHAPTER_NAMES[wanted]+'，等待關卡列表更新');
+    }
+    return false;
+  }
   function currentWorldState(){
+    const chapter=currentChapterState();
+    if(chapter.chapter===2)return {
+      tabs:null,available:true,world:SECOND_CHAPTER_WORLD,source:chapter.source
+    };
+    if(chapter.chapter===null)return {tabs:null,available:false,world:null,source:'chapter-unconfirmed'};
     const tabs=worldTabs(),byStages=visibleWorldFromStages();
     const byTabs=tabs?selectedWorldFromTabs(tabs):null;
     // 清單中>=2張同周目的實際關卡名稱，比漸層按鈕背景色可靠。
@@ -2125,6 +2218,10 @@
   let worldClickAt=0;
   function ensureWorldTab(){
     const state=currentWorldState(),wanted=chosenWorld();
+    if(wanted===SECOND_CHAPTER_WORLD){
+      if(state.world===SECOND_CHAPTER_WORLD){attempts.world=0;return true;}
+      tell('等待第二章關卡清單，暫不出發');return false;
+    }
     if(!state.available){
       if(wanted===1)return true;
       tell('找不到目標周目切換鈕，暫不出征');return false;
@@ -2200,10 +2297,11 @@
   }
   function handleExpedition(){
     phase('expedition');
+    if(!ensureChapterTab())return;
     if(!ensureWorldTab())return;
     if(catalog.world!==chosenWorld()){stageExplorerTick();return;}
     // 當目標和右側預覽都已證實一致，不讓背景掃描阻止出發。
-    if([4,5,6].includes(chosenWorld()) && catalog.running){
+    if([4,5,6,7].includes(chosenWorld()) && catalog.running){
       const wanted=targetStage(),row=wanted&&stageTarget();
       const previewOK=wanted&&row&&hits(wanted.re).some(h=>
         rightPreview(h)&&stageFitsWorld(h.t,chosenWorld()));
